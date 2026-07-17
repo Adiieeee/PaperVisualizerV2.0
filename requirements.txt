@@ -1,0 +1,9 @@
+PyMuPDF
+google-generativeai
+pydantic
+sentence-transformers
+chromadb
+networkx
+pyvis
+python-dotenv
+tenacity
