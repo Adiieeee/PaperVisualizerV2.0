@@ -1,0 +1,53 @@
+[
+  {"id": "count-method",        "q": "Metode apa yang paling banyak dipakai di seluruh paper?", "category": "counting",   "intent": "counting",   "target_type": "Method",  "expected_contains": ["DenseNet"]},
+  {"id": "count-method2",       "q": "Arsitektur apa yang paling banyak koneksinya?",           "category": "counting",   "intent": "counting",   "target_type": "Method",  "expected_contains": ["DenseNet"]},
+  {"id": "count-dataset",       "q": "Dataset apa yang paling sering dipakai?",                 "category": "counting",   "intent": "counting",   "target_type": "Dataset", "expected_contains": ["ImageNet"]},
+  {"id": "count-metric",        "q": "Metrik evaluasi apa yang paling umum dipakai?",           "category": "counting",   "intent": "counting",   "target_type": "Metric",  "expected_contains": ["top-5 error"]},
+  {"id": "count-author",        "q": "Penulis siapa yang paling banyak terhubung?",             "category": "counting",   "intent": "counting",   "target_type": "Author",  "expected_contains": ["Simonyan"]},
+
+  {"id": "ent-resnet-dataset",  "q": "Dataset apa yang digunakan ResNet?",                      "category": "relational", "intent": "entity", "expected_node": "ResNet",    "expected_contains": ["ImageNet"]},
+  {"id": "ent-googlenet-data",  "q": "Dataset apa yang digunakan GoogLeNet?",                   "category": "relational", "intent": "entity", "expected_node": "GoogLeNet", "expected_contains": ["ImageNet"]},
+  {"id": "ent-densenet-data",   "q": "Dataset apa yang dipakai DenseNet?",                      "category": "relational", "intent": "entity", "expected_node": "DenseNet",  "expected_contains": ["CIFAR"]},
+  {"id": "ent-googlenet-lim",   "q": "Apa kelemahan GoogLeNet?",                                "category": "relational", "intent": "entity", "expected_node": "GoogLeNet", "expected_contains": ["memory usage"]},
+  {"id": "ent-vgg-compares",    "q": "Arsitektur apa yang dibandingkan dengan VGG?",            "category": "relational", "intent": "entity", "expected_node": "VGG",       "expected_contains": ["GoogLeNet"]},
+  {"id": "ent-densenet-comp",   "q": "Arsitektur apa yang dibandingkan dengan DenseNet?",       "category": "relational", "intent": "entity", "expected_node": "DenseNet",  "expected_contains": ["VGG"]},
+  {"id": "ent-googlenet-build", "q": "GoogLeNet dibangun di atas metode apa?",                  "category": "relational", "intent": "entity", "expected_node": "GoogLeNet", "expected_contains": ["Inception"]},
+  {"id": "ent-highway-build",   "q": "Konsep apa yang mendasari highway networks?",             "category": "relational", "intent": "entity", "expected_contains": ["Long Short"]},
+
+  {"id": "mh-googlenet-line",   "q": "Dari mana silsilah arsitektur GoogLeNet?",                "category": "multihop",   "intent": "entity", "expected_node": "GoogLeNet", "expected_contains": ["Inception"]},
+  {"id": "mh-densenet-builds",  "q": "Varian apa yang dikembangkan dari DenseNet?",             "category": "multihop",   "intent": "entity", "expected_node": "DenseNet",  "expected_contains": ["DenseNet-BC"]},
+
+  {"id": "paper-vgg-author",    "q": "Siapa penulis paper VGG?",                                "category": "paper-attr", "intent": "entity", "expected_node": "Very Deep Convolutional Networks", "expected_contains": ["Simonyan"]},
+  {"id": "paper-vgg-inst",      "q": "Institusi apa yang menaungi penulis paper VGG?",          "category": "paper-attr", "intent": "entity", "expected_node": "Very Deep Convolutional Networks", "expected_contains": ["Visual Geometry Group"]},
+  {"id": "paper-resnet-find",   "q": "Apa temuan utama paper ResNet?",                          "category": "paper-attr", "intent": "entity", "expected_node": "Deep Residual Learning for Image Recognition", "expected_contains": ["degradation"]},
+  {"id": "paper-resnet-inst",   "q": "Institusi apa yang menaungi penulis paper ResNet?",       "category": "paper-attr", "intent": "entity", "expected_node": "Deep Residual Learning for Image Recognition", "expected_contains": ["Microsoft"]},
+  {"id": "paper-densenet-auth", "q": "Siapa penulis paper DenseNet?",                           "category": "paper-attr", "intent": "entity", "expected_node": "Densely Connected Convolutional Networks", "expected_contains": ["Huang"]},
+  {"id": "paper-densenet-inst", "q": "Institusi apa yang menaungi penulis paper DenseNet?",     "category": "paper-attr", "intent": "entity", "expected_node": "Densely Connected Convolutional Networks", "expected_contains": ["Cornell"]},
+  {"id": "paper-googlenet-au",  "q": "Siapa penulis paper GoogLeNet?",                          "category": "paper-attr", "intent": "entity", "expected_node": "Going Deeper with Convolutions", "expected_contains": ["Szegedy"]},
+  {"id": "paper-googlenet-in",  "q": "Institusi apa yang menaungi penulis paper GoogLeNet?",    "category": "paper-attr", "intent": "entity", "expected_node": "Going Deeper with Convolutions", "expected_contains": ["Google"]},
+  {"id": "paper-highway-auth",  "q": "Siapa penulis paper Highway Networks?",                   "category": "paper-attr", "intent": "entity", "expected_node": "Highway Networks", "expected_contains": ["Srivastava"]},
+  {"id": "paper-highway-inst",  "q": "Institusi apa yang menaungi penulis paper Highway Networks?", "category": "paper-attr", "intent": "entity", "expected_node": "Highway Networks", "expected_contains": ["IDSIA"]},
+
+  {"id": "struct-bridge",       "q": "Entitas apa yang menjadi jembatan antar paper?",          "category": "structural", "intent": "structural", "expected_contains": ["ImageNet"]},
+  {"id": "struct-bridge2",      "q": "Dataset apa yang jadi benchmark bersama lintas paper?",   "category": "structural", "intent": "structural", "expected_contains": ["CIFAR-10"]},
+
+  {"id": "resolve-paraphrase",  "q": "jaringan densely connected convolutional",                "category": "resolution", "intent": "entity", "expected_contains": ["DenseNet"]},
+  {"id": "resolve-residual",    "q": "kerangka pembelajaran residual untuk pengenalan citra",   "category": "resolution", "intent": "entity", "expected_contains": ["esidual"]},
+
+  {"id": "adv-multi-entity",    "q": "Apa institusi penulis paper ResNet dan paper DenseNet?",   "category": "adversarial", "intent": "entity", "expected_contains": ["Microsoft", "Cornell"]},
+  {"id": "adv-paraphrase-hard", "q": "arsitektur dengan koneksi lompat antar layer",             "category": "adversarial", "intent": "entity", "expected_contains": ["esidual"]},
+  {"id": "adv-3hop",            "q": "Institusi apa yang menaungi penulis arsitektur yang dibandingkan GoogLeNet?", "category": "adversarial", "intent": "entity", "expected_contains": ["Oxford"]},
+  {"id": "adv-multi-limit",     "q": "Bandingkan kelemahan GoogLeNet dan DenseNet.",             "category": "adversarial", "intent": "entity", "expected_contains": ["memory usage"]},
+  {"id": "adv-router-count",    "q": "Berapa banyak arsitektur yang dibandingkan dengan VGG?",   "category": "adversarial", "intent": "entity", "expected_node": "VGG", "expected_contains": ["GoogLeNet"]},
+  {"id": "adv-subjective",      "q": "Arsitektur mana yang terbaik menurut paper-paper ini?",    "category": "adversarial", "intent": "entity", "expected_refuse": true},
+  {"id": "adv-negation",        "q": "Dataset apa yang TIDAK pernah dipakai oleh ResNet?",       "category": "adversarial", "intent": "entity", "expected_refuse": true},
+
+  {"id": "neg-out-of-domain",   "q": "Siapa CEO Google saat ini?",                              "category": "negative", "intent": "entity", "expected_refuse": true},
+  {"id": "neg-not-in-corpus",   "q": "Berapa akurasi Transformer pada dataset GLUE?",           "category": "negative", "intent": "entity", "expected_refuse": true},
+  {"id": "neg-no-relation",     "q": "Metode apa yang mengatasi kelemahan DenseNet?",           "category": "negative", "intent": "entity", "expected_refuse": true},
+  {"id": "neg-missing-attr",    "q": "Tahun berapa paper ResNet dipublikasikan?",               "category": "negative", "intent": "entity", "expected_refuse": true},
+  {"id": "neg-fabricate",       "q": "Berapa harga GPU untuk melatih VGG?",                      "category": "negative", "intent": "entity", "expected_refuse": true},
+  {"id": "neg-cooking",         "q": "Bagaimana cara memasak nasi goreng?",                      "category": "negative", "intent": "entity", "expected_refuse": true},
+  {"id": "neg-num-gpu",         "q": "Berapa jumlah GPU yang dipakai melatih GoogLeNet?",        "category": "negative", "intent": "entity", "expected_refuse": true},
+  {"id": "neg-age",             "q": "Berapa umur penulis pertama paper ResNet?",               "category": "negative", "intent": "entity", "expected_refuse": true}
+]

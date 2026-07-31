@@ -2,10 +2,45 @@ import os
 import fitz  # PyMuPDF
 from typing import List, Dict
 
+from src.config import SECTION_FILTER_PATTERN
+
+# PDF text often contains Unicode ligature glyphs (ﬁ, ﬂ, …) that pollute entity names
+# (e.g. "classiﬁcation"). Map them back to plain ASCII. General — any corpus, any domain.
+_LIGATURES = {
+    "ﬀ": "ff", "ﬁ": "fi", "ﬂ": "fl", "ﬃ": "ffi",
+    "ﬄ": "ffl", "ﬅ": "st", "ﬆ": "st",
+}
+
+
+def _fix_ligatures(text: str) -> str:
+    for lig, repl in _LIGATURES.items():
+        if lig in text:
+            text = text.replace(lig, repl)
+    return text
+
+
 class DocumentProcessor:
     def __init__(self, chunk_size: int = 2000, chunk_overlap: int = 200):
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
+
+    def _filter_sections(self, text: str) -> str:
+        """
+        Truncate the document at the first terminal section heading
+        (References / Bibliography / Acknowledgements) that appears in the latter
+        half of the text. Removes citation lists and acknowledgements — a major
+        source of noise (citation authors, bibliography entries) — while the >50%
+        position guard prevents a stray early match from deleting body content.
+        Applied before chunking, so neither extraction nor the vector store ingest it.
+        """
+        cut_at = None
+        for m in SECTION_FILTER_PATTERN.finditer(text):
+            if m.start() >= len(text) * 0.5:
+                cut_at = m.start()
+                break
+        if cut_at is not None:
+            return text[:cut_at]
+        return text
 
     def process_pdf(self, file_path: str) -> List[Dict[str, str]]:
         """
@@ -27,7 +62,13 @@ class DocumentProcessor:
             for page_num in range(len(doc)):
                 page = doc.load_page(page_num)
                 full_text += page.get_text("text") + "\n"
-            
+
+            full_text = _fix_ligatures(full_text)  # ﬁ/ﬂ → fi/fl before anything downstream
+
+            # Drop low-value tail sections (References/Bibliography/Acknowledgements)
+            # before chunking, so they enter neither the graph nor the vector store.
+            full_text = self._filter_sections(full_text)
+
             # Simple chunking by characters
             # In a more advanced setup, we could chunk by sentences or paragraphs.
             start = 0

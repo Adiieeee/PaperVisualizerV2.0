@@ -17,9 +17,9 @@ class KnowledgeExtractor:
             
             # Keep track of chunk provenance for grounding
             for entity in knowledge.entities:
-                setattr(entity, "source_chunk_id", chunk["chunk_id"])
+                entity._source_chunk_id = chunk["chunk_id"]
             for rel in knowledge.relationships:
-                setattr(rel, "source_chunk_id", chunk["chunk_id"])
+                rel._source_chunk_id = chunk["chunk_id"]
                 
             results.append(knowledge)
             

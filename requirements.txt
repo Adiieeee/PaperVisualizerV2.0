@@ -1,5 +1,5 @@
 PyMuPDF
-google-generativeai
+google-genai
 pydantic
 sentence-transformers
 chromadb
@@ -7,3 +7,5 @@ networkx
 pyvis
 python-dotenv
 tenacity
+fastapi
+uvicorn

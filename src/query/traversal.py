@@ -1,16 +1,21 @@
 import networkx as nx
-from typing import List, Dict, Any
+from typing import Dict, Any
+
 
 class GraphTraversal:
     def __init__(self, graph: nx.Graph):
         self.graph = graph
 
-    def traverse_1_hop(self, start_node: str) -> Dict[str, Any]:
+    def traverse(self, start_node: str, max_hops: int = 2, max_rels: int = 150) -> Dict[str, Any]:
         """
-        Performs a 1-hop traversal from the start_node.
-        Implements Paper-blocking: neighbors of type 'Paper' are included as provenance
-        but we explicitly do not traverse *through* them in further hops (if multi-hop was implemented).
-        Here, it returns the 1-hop context.
+        BFS up to `max_hops` from start_node (default 2 → enables lineage/chain answers and
+        Paper→Author→Institution affiliation lookups).
+
+        Paper-blocking: Paper nodes are still recorded as neighbors (provenance) but are NOT
+        expanded further — this keeps the context from exploding through paper hubs while still
+        letting method→method chains (e.g. GoogLeNet → Inception → Network in Network) surface.
+        BOTH hops always run (traversal is cheap on this graph); only the RECORDED relationships
+        are capped at `max_rels` so a high-degree hub can't flood the LLM context.
         """
         if not self.graph.has_node(start_node):
             return {"error": f"Node '{start_node}' not found in the graph."}
@@ -20,44 +25,59 @@ class GraphTraversal:
             "entity": start_node,
             "type": node_data.get("type"),
             "description": node_data.get("description"),
-            "relationships": []
+            "relationships": [],
         }
 
-        # 1-hop neighbors
-        for neighbor in self.graph.neighbors(start_node):
-            edge_data = self.graph.get_edge_data(start_node, neighbor)
-            neighbor_data = self.graph.nodes[neighbor]
-            
-            rel_info = {
-                "target": neighbor,
-                "target_type": neighbor_data.get("type"),
-                "relation": edge_data.get("relation"),
-                "description": edge_data.get("description")
-            }
-            context["relationships"].append(rel_info)
-            
-            # Paper blocking logic note:
-            # Since this is strictly 1-hop, we just collect it. 
-            # If we were doing 2-hops, we'd add: if neighbor_data.get("type") == "Paper": continue
+        visited_nodes = {start_node}
+        visited_edges = set()
+        frontier = [start_node]
+
+        for hop in range(1, max_hops + 1):
+            next_frontier = []
+            for cur in frontier:
+                for nb in self.graph.neighbors(cur):
+                    ekey = frozenset((cur, nb))
+                    if ekey not in visited_edges:
+                        visited_edges.add(ekey)
+                        if len(context["relationships"]) < max_rels:
+                            ed = self.graph.get_edge_data(cur, nb)
+                            context["relationships"].append({
+                                "source": cur,
+                                "target": nb,
+                                "target_type": self.graph.nodes[nb].get("type"),
+                                "relation": ed.get("relation"),
+                                "description": ed.get("description"),
+                                "hop": hop,
+                            })
+                    if nb not in visited_nodes:
+                        visited_nodes.add(nb)
+                        # Paper-blocking: don't traverse THROUGH paper nodes.
+                        if self.graph.nodes[nb].get("type") != "Paper":
+                            next_frontier.append(nb)
+            frontier = next_frontier
 
         return context
 
+    # Backwards-compatible 1-hop helper.
+    def traverse_1_hop(self, start_node: str) -> Dict[str, Any]:
+        return self.traverse(start_node, max_hops=1)
+
     def format_traversal_context(self, traversal_result: Dict[str, Any]) -> str:
-        """
-        Formats the traversal dictionary into a readable string for the LLM.
-        """
+        """Format the (possibly multi-hop) traversal into readable text for the LLM."""
         if "error" in traversal_result:
             return traversal_result["error"]
-            
-        lines = []
-        lines.append(f"Entity: {traversal_result['entity']} ({traversal_result['type']})")
-        if traversal_result['description']:
+
+        lines = [f"Entity: {traversal_result['entity']} ({traversal_result['type']})"]
+        if traversal_result.get("description"):
             lines.append(f"Description: {traversal_result['description']}")
-            
-        lines.append("Relationships:")
-        for rel in traversal_result['relationships']:
-            lines.append(f"- {rel['relation']} -> {rel['target']} ({rel['target_type']})")
-            if rel['description']:
-                lines.append(f"  Note: {rel['description']}")
-                
+
+        lines.append("Relationships (direct = hop 1, indirect chain = hop 2+):")
+        for rel in traversal_result["relationships"]:
+            lines.append(
+                f"- [hop {rel['hop']}] {rel['source']} --{rel['relation']}--> "
+                f"{rel['target']} ({rel.get('target_type')})"
+            )
+            if rel.get("description"):
+                lines.append(f"    Note: {rel['description']}")
+
         return "\n".join(lines)

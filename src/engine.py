@@ -51,15 +51,27 @@ class GraphRAGEngine:
             context_parts.append("Thematic Community Context:")
             for i, s in enumerate(summaries):
                 context_parts.append(f"[{i+1}] {s}")
-                
+
+        elif routing.intent == "structural":
+            print("[2] Executing Structural Query (cross-paper bridge entities)")
+            bridges = self.analytics.get_bridge_entities()
+            context_parts.append("Entities that bridge multiple papers (shared across papers):")
+            if not bridges:
+                context_parts.append("(None — entities in this corpus mostly belong to a single paper.)")
+            for name, papers, count in bridges:
+                context_parts.append(f"- {name}: appears in {count} papers ({'; '.join(p[:50] for p in papers)})")
+
         else: # entity
             print("[2] Executing Hybrid Entity Search")
             search_q = routing.search_query or user_query
-            resolved_node = self.resolver.resolve_entity(search_q)
-            
+            resolved_node = self.resolver.resolve_entity(search_q, context_query=user_query)
+            # If the router's refined query missed, try the full user query too.
+            if not resolved_node and search_q != user_query:
+                resolved_node = self.resolver.resolve_entity(user_query, context_query=user_query)
+
             if resolved_node:
-                print(f"[3] Traversing graph from '{resolved_node}'")
-                trav_result = self.traversal.traverse_1_hop(resolved_node)
+                print(f"[3] Traversing graph from '{resolved_node}' (multi-hop)")
+                trav_result = self.traversal.traverse(resolved_node, max_hops=2)
                 context_parts.append("Graph Context:")
                 context_parts.append(self.traversal.format_traversal_context(trav_result))
             else:
