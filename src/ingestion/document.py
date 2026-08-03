@@ -2,7 +2,7 @@ import os
 import fitz  # PyMuPDF
 from typing import List, Dict
 
-from src.config import SECTION_FILTER_PATTERN
+from src.config import SECTION_FILTER_PATTERN, SECTION_FILTER_MIN_POSITION
 
 # PDF text often contains Unicode ligature glyphs (ﬁ, ﬂ, …) that pollute entity names
 # (e.g. "classiﬁcation"). Map them back to plain ASCII. General — any corpus, any domain.
@@ -27,15 +27,18 @@ class DocumentProcessor:
     def _filter_sections(self, text: str) -> str:
         """
         Truncate the document at the first terminal section heading
-        (References / Bibliography / Acknowledgements) that appears in the latter
-        half of the text. Removes citation lists and acknowledgements — a major
-        source of noise (citation authors, bibliography entries) — while the >50%
-        position guard prevents a stray early match from deleting body content.
+        (References / Bibliography / Acknowledgements). Everything after it — the citation
+        list and any appendix that follows — is dropped: it is a major source of noise
+        (citation authors, bibliography entries) and of wasted LLM calls.
+
+        `SECTION_FILTER_MIN_POSITION` guards against a stray early match deleting body
+        content. It is deliberately low (0.20) because modern papers with long appendices
+        put References at only ~30-47% of the document.
         Applied before chunking, so neither extraction nor the vector store ingest it.
         """
         cut_at = None
         for m in SECTION_FILTER_PATTERN.finditer(text):
-            if m.start() >= len(text) * 0.5:
+            if m.start() >= len(text) * SECTION_FILTER_MIN_POSITION:
                 cut_at = m.start()
                 break
         if cut_at is not None:
@@ -65,9 +68,15 @@ class DocumentProcessor:
 
             full_text = _fix_ligatures(full_text)  # ﬁ/ﬂ → fi/fl before anything downstream
 
-            # Drop low-value tail sections (References/Bibliography/Acknowledgements)
-            # before chunking, so they enter neither the graph nor the vector store.
+            # Drop low-value tail sections (References/Bibliography/Acknowledgements and
+            # anything after them) before chunking, so they enter neither the graph nor the
+            # vector store. Logged so an unexpected cut is visible instead of silent.
+            before = len(full_text)
             full_text = self._filter_sections(full_text)
+            if len(full_text) < before:
+                pct = 100 * (1 - len(full_text) / before)
+                print(f"  [Filter] {doc_id}: dibuang {pct:.0f}% "
+                      f"({before - len(full_text):,} char refs/appendix)")
 
             # Simple chunking by characters
             # In a more advanced setup, we could chunk by sentences or paragraphs.

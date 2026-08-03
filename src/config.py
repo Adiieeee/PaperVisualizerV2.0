@@ -43,6 +43,13 @@ SECTION_FILTER_PATTERN = re.compile(
     re.IGNORECASE | re.MULTILINE,
 )
 
+# Posisi minimum (fraksi dokumen) sebuah heading terminal boleh dianggap sah.
+# Guard ini mencegah kata "References" yang muncul terlalu awal (mis. di daftar isi)
+# memotong badan paper. NILAI 0.5 TERLALU KETAT untuk paper modern: yang punya appendix
+# panjang menaruh References di ~29-47% dokumen, sehingga filter tidak pernah aktif dan
+# seluruh daftar pustaka + appendix ikut ter-chunk (boros kuota + noise sitasi).
+SECTION_FILTER_MIN_POSITION = 0.20
+
 # --- Paper metadata (B1 title injection + B2 model↔paper link) ---
 # NOT hardcoded per corpus: auto-generated at build time (one LLM call per PDF extracts the
 # title + the popular model names the paper's model is known by) and cached to this JSON.
@@ -95,6 +102,15 @@ class PaperMeta(BaseModel):
         description="Popular short names/acronyms the main model/method this paper introduces is "
                     "commonly known by (e.g. 'ResNet', 'VGG-16'). Empty if it introduces no named model.",
     )
+
+class FamilyDecision(BaseModel):
+    same_family: bool = Field(
+        description="True hanya jika kedua nama merujuk pada keluarga produk/model yang SAMA."
+    )
+    canonical: str = Field(
+        description="Nama induk yang sebaiknya dipakai (salah satu dari dua nama yang diberikan)."
+    )
+    reason: str = Field(description="Alasan singkat.")
 
 class Entity(BaseModel):
     name: str = Field(description="The normalized name of the entity. Use canonical naming if possible.")

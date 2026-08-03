@@ -21,7 +21,7 @@ class GraphAnalytics:
         for n in nodes_of_type:
             deg = sum(
                 1 for _, _, ed in self.graph.edges(n, data=True)
-                if ed.get('relation') != 'mentioned_in'
+                if ed.get('relation') not in ('mentioned_in', 'variant_of')
             )
             degrees.append((n, deg))
 

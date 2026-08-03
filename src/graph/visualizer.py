@@ -642,6 +642,28 @@ _PANEL_JS = """
       grp.innerHTML = head + body;
       container.appendChild(grp);
     });
+
+    // Top Entity Families — varian ber-versi yang ditautkan lewat `variant_of`.
+    // Bisa Method / Dataset / Metric / Task tergantung korpus; section ini MENYEMBUNYIKAN
+    // DIRI kalau korpus tidak punya entitas berversi sama sekali.
+    var FAM = GR_DATA.FAMILIES || [];
+    if (FAM.length) {
+      var fg = document.createElement("div");
+      fg.className = "gr-insight-group";
+      var fh = '<div class="gr-insight-head"><span class="gr-dot" style="background:' +
+               (TYPE_COLORS[FAM[0].type] || "#999999") + '"></span>Top Entity Families</div>';
+      var fb = "";
+      FAM.forEach(function (f) {
+        fb += '<div class="gr-insight-item" data-id="' + encodeURIComponent(f.name) + '">' +
+              '<span class="gr-insight-name" title="' + esc(f.name) + ' (' + esc(f.type) +
+              ') \\u2014 ' + f.variants + ' varian, ' + f.papers + ' paper">' +
+              esc(f.name) + '</span>' +
+              '<span class="gr-badge">' + f.variants + 'v \\u00b7 ' + f.papers + 'p</span></div>';
+      });
+      fg.innerHTML = fh + fb;
+      container.appendChild(fg);
+    }
+
     container.querySelectorAll(".gr-insight-item").forEach(function (el) {
       el.addEventListener("click", function () {
         executeSearchSelection(decodeURIComponent(el.getAttribute("data-id")));
@@ -998,7 +1020,8 @@ class GraphVisualizer:
     NODE_COLORS = {
         "Paper": "#818cf8",       # Indigo-violet
         "Author": "#f87171",      # Soft coral-red
-        "Institution": "#38bdf8", # Sky blue
+        "Institution": "#a89684", # Warm taupe — netral, tidak bentrok dgn Paper/Metric
+                                  # (sky blue lama: ΔE 6.7 vs Metric cyan = nyaris tak terbedakan)
         "Method": "#4ade80",      # Bright green
         "Dataset": "#fbbf24",     # Amber gold
         "Metric": "#22d3ee",      # Cyan
@@ -1021,6 +1044,7 @@ class GraphVisualizer:
         "builds_on": "#38bdf8",
         "compares": "#22d3ee",
         "mentioned_in": "#475569",  # slate-600: recessive provenance edge on dark bg
+        "variant_of": "#64748b",    # slate-500: tautan varian -> keluarga (build-time)
     }
     DEFAULT_EDGE_COLOR = "#475569"
 
@@ -1052,6 +1076,7 @@ class GraphVisualizer:
         "builds_on": "<b>[Method &rarr; Method]</b> Metode ini pengembangan dari metode lain.",
         "compares": "<b>[Method/Paper &rarr; Method]</b> Perbandingan performa/efisiensi (A vs B).",
         "mentioned_in": "<b>[Entity &rarr; Paper]</b> Entity ini disebut/muncul di paper tersebut.",
+        "variant_of": "<b>[Varian &rarr; Keluarga]</b> Versi/ukuran spesifik dari satu keluarga model atau dataset (mis. Llama-3-8B &rarr; Llama).",
     }
 
     def __init__(self, graph: nx.Graph):
@@ -1074,12 +1099,45 @@ class GraphVisualizer:
                     continue
                 deg = sum(
                     1 for _, _, ed in self.graph.edges(n, data=True)
-                    if ed.get("relation") != "mentioned_in"
+                    if ed.get("relation") not in ("mentioned_in", "variant_of")
                 )
                 scored.append((n, deg))
             scored.sort(key=lambda x: x[1], reverse=True)
             result[t] = [{"name": n, "score": s} for n, s in scored[:top_n]]
         return result
+
+    def _entity_families(self, top_n: int = 6) -> list:
+        """
+        Keluarga entitas (varian ber-versi yang ditautkan lewat `variant_of`), diurutkan
+        berdasarkan jangkauan lintas-paper. Domain-agnostik: bisa berupa Method, Dataset,
+        Metric, atau Task — tergantung korpus. Kosong bila korpus tidak memakai penomoran versi,
+        dan panel akan menyembunyikan diri.
+        """
+        papers = {n for n, d in self.graph.nodes(data=True) if d.get("type") == "Paper"}
+        members = {}
+        for u, v, d in self.graph.edges(data=True):
+            if d.get("relation") != "variant_of":
+                continue
+            du = sum(1 for _, _, e in self.graph.edges(u, data=True) if e.get("relation") == "variant_of")
+            dv = sum(1 for _, _, e in self.graph.edges(v, data=True) if e.get("relation") == "variant_of")
+            parent, child = (u, v) if du >= dv else (v, u)
+            members.setdefault(parent, set()).add(child)
+
+        out = []
+        for parent, variants in members.items():
+            if len(variants) < 2:
+                continue
+            reach = {p for p in self.graph.neighbors(parent) if p in papers}
+            for v in variants:
+                reach |= {p for p in self.graph.neighbors(v) if p in papers}
+            out.append({
+                "name": parent,
+                "type": self.graph.nodes[parent].get("type", ""),
+                "variants": len(variants),
+                "papers": len(reach),
+            })
+        out.sort(key=lambda x: (-x["papers"], -x["variants"]))
+        return out[:top_n]
 
     def _ui_injection(self, type_counts: Counter, node_meta: dict) -> str:
         edge_counts = Counter(d.get("relation", "") for _, _, d in self.graph.edges(data=True))
@@ -1092,6 +1150,7 @@ class GraphVisualizer:
             "EDGE_COUNTS": dict(edge_counts),
             "EDGE_DESCRIPTIONS": self.EDGE_DESCRIPTIONS,
             "INSIGHTS": self._insights(),
+            "FAMILIES": self._entity_families(),
             "TOTAL_NODES": self.graph.number_of_nodes(),
             "TOTAL_EDGES": self.graph.number_of_edges(),
         }

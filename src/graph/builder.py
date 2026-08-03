@@ -1,3 +1,4 @@
+import re
 import networkx as nx
 from collections import Counter
 from typing import List, Tuple
@@ -202,6 +203,137 @@ class GraphBuilder:
                     linked += 1
         if linked:
             print(f"[Builder] Linked {linked} model node(s) to their source paper (B2).")
+
+    # Nama varian bergaya "<huruf><angka versi>": ResNet-50, llama-2-70b-chat, CIFAR-100,
+    # Gemini-1.5-Pro. Murni pola penulisan — tidak ada daftar nama yang di-hardcode, sehingga
+    # bekerja untuk korpus/domain apa pun.
+    _FAMILY_BASE_RE = re.compile(r"^([A-Za-z][A-Za-z\s]{2,}?)[\s\-_]*\d")
+
+    @classmethod
+    def _family_base(cls, name: str):
+        m = cls._FAMILY_BASE_RE.match(name.strip())
+        if not m:
+            return None
+        base = re.sub(r"\s+", " ", m.group(1)).strip()
+        return base if len(base) >= 3 else None
+
+    def link_entity_families(self, min_variants: int = 2, min_papers: int = 2):
+        """
+        Hubungkan varian bertingkat-versi ke satu node "keluarga" lewat relasi `variant_of`
+        (mis. llama-2-70b-chat / LLaMA 3 / Llama-17B  ->  Llama).
+
+        Tujuannya konektivitas, BUKAN penggabungan: setiap varian tetap node tersendiri, jadi
+        guard CRITICAL 1 (ResNet-44 != ResNet-56) tidak dilanggar. Tanpa ini, entitas yang
+        sebenarnya satu keluarga tersebar dan hanya menempel ke paper-nya masing-masing.
+
+        Keluarga hanya dibuat kalau benar-benar menambah konektivitas: minimal `min_variants`
+        varian DAN tersebar di minimal `min_papers` paper berbeda.
+        """
+        papers = {n for n, d in self.graph.nodes(data=True) if d.get("type") == "Paper"}
+        lower_index = {n.lower(): n for n in self.graph.nodes()}
+
+        groups = {}
+        for n, d in self.graph.nodes(data=True):
+            if n in papers:
+                continue
+            base = self._family_base(n)
+            if base:
+                groups.setdefault((d.get("type", ""), base.lower()), []).append((n, base))
+
+        created = linked = 0
+        for (ent_type, base_key), members in groups.items():
+            if len(members) < min_variants:
+                continue
+            covered = set()
+            for name, _ in members:
+                covered |= {v for v in self.graph.neighbors(name) if v in papers}
+            if len(covered) < min_papers:
+                continue
+
+            # Pakai node yang sudah ada bila namanya persis basis keluarga; kalau tidak,
+            # buat node baru memakai kapitalisasi yang paling sering dipakai varian-variannya.
+            family = lower_index.get(base_key)
+            if family is None:
+                spellings = Counter(b for _, b in members)
+                family = spellings.most_common(1)[0][0]
+                self.graph.add_node(family, type=ent_type, description="", source_chunk_id="")
+                lower_index[base_key] = family
+                created += 1
+
+            for name, _ in members:
+                if name != family and not self.graph.has_edge(name, family):
+                    self.graph.add_edge(
+                        name, family,
+                        relation="variant_of",
+                        description=f"{name} adalah varian dari {family}.",
+                        source_chunk_id="",
+                    )
+                    linked += 1
+
+        if linked:
+            print(f"[Builder] Menautkan {linked} varian ke {created} node keluarga baru "
+                  f"(relasi variant_of).")
+
+    def family_nodes(self) -> dict:
+        """{node_keluarga: [varian...]} — node yang jadi induk >=2 edge variant_of."""
+        members = {}
+        for u, v, d in self.graph.edges(data=True):
+            if d.get("relation") != "variant_of":
+                continue
+            # arah tersimpan sebagai (varian, keluarga) saat dibuat, tapi GraphML undirected:
+            # induk = node yang punya lebih banyak tautan variant_of.
+            du = sum(1 for _, _, e in self.graph.edges(u, data=True) if e.get("relation") == "variant_of")
+            dv = sum(1 for _, _, e in self.graph.edges(v, data=True) if e.get("relation") == "variant_of")
+            parent, child = (u, v) if du >= dv else (v, u)
+            members.setdefault(parent, []).append(child)
+        return {k: v for k, v in members.items() if len(v) >= 2}
+
+    def merge_family_aliases(self, llm):
+        """
+        Gabungkan keluarga yang sebenarnya sama tapi beda penyebutan (mis. ChatGPT vs GPT)
+        dengan adjudikasi LLM. Kandidat dibatasi pada pasangan yang salah satu namanya termuat
+        di nama lain — jadi jumlah panggilan LLM sangat sedikit (biasanya 0-3 per korpus).
+        LLM dipakai karena ia tahu ChatGPT≈GPT tapi ResNet≠DenseNet; pencocokan string murni
+        akan salah menggabungkan keduanya.
+        """
+        fams = self.family_nodes()
+        names = sorted(fams)
+        candidates = [
+            (big, small) for big in names for small in names
+            if big != small and small.lower() in big.lower()
+        ]
+        if not candidates:
+            return
+
+        merged = 0
+        for big, small in candidates:
+            if not (self.graph.has_node(big) and self.graph.has_node(small)):
+                continue
+            try:
+                decision = llm.resolve_family_merge(big, fams.get(big, []), small, fams.get(small, []))
+            except Exception as e:
+                print(f"[Builder] Adjudikasi keluarga '{big}' vs '{small}' gagal: {e}")
+                continue
+
+            if decision.same_family:
+                parent = small if decision.canonical.lower().strip() == small.lower() else big
+                child = big if parent == small else small
+                if parent != child and not self.graph.has_edge(child, parent):
+                    self.graph.add_edge(
+                        child, parent,
+                        relation="variant_of",
+                        description=f"{child} adalah penyebutan lain dari keluarga {parent}.",
+                        source_chunk_id="",
+                    )
+                    merged += 1
+                    print(f"  [Family] LLM: '{child}' dan '{parent}' keluarga sama -> ditautkan "
+                          f"({decision.reason[:60]})")
+            else:
+                print(f"  [Family] LLM: '{big}' dan '{small}' BUKAN keluarga sama "
+                      f"({decision.reason[:60]})")
+
+        if merged:
+            print(f"[Builder] {merged} keluarga digabungkan lewat adjudikasi LLM.")
 
     def reclassify_noncanonical_papers(self, paper_metadata: dict):
         """

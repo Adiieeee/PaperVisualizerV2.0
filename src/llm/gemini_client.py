@@ -41,7 +41,9 @@ def print_retry(retry_state):
     if exc:
         print(f"Error: {exc}")
 
-from src.config import GEMINI_API_KEY, ExtractedKnowledge, DedupDecision, QueryRouting, PaperMeta
+from src.config import (
+    GEMINI_API_KEY, ExtractedKnowledge, DedupDecision, QueryRouting, PaperMeta, FamilyDecision
+)
 
 class GeminiClient:
     def __init__(self, model_name: str = "gemini-flash-lite-latest"):
@@ -171,6 +173,54 @@ class GeminiClient:
 
     @retry(
         wait=wait_exponential(multiplier=2, min=10, max=90),
+        stop=stop_after_attempt(5),
+        retry=retry_if_exception(_is_retryable),
+        before_sleep=print_retry
+    )
+    def resolve_family_merge(self, name_a: str, examples_a: list, name_b: str, examples_b: list) -> FamilyDecision:
+        """
+        Putuskan apakah dua "keluarga entitas" sebenarnya keluarga yang sama
+        (mis. ChatGPT vs GPT). Dipakai hanya untuk sedikit pasangan kandidat, jadi murah.
+        Memanfaatkan world knowledge LLM — tidak ada daftar nama yang di-hardcode.
+        """
+        prompt = f"""
+        Dua kelompok nama entitas berikut diambil dari paper akademik. Tentukan apakah keduanya
+        merujuk pada KELUARGA produk/model/dataset yang SAMA.
+
+        Kelompok A: "{name_a}"  — contoh varian: {json.dumps(examples_a[:6], ensure_ascii=False)}
+        Kelompok B: "{name_b}"  — contoh varian: {json.dumps(examples_b[:6], ensure_ascii=False)}
+
+        ATURAN:
+        - same_family = true HANYA jika keduanya benar-benar keluarga yang sama, sekadar beda
+          penyebutan/branding (contoh: "ChatGPT" dan "GPT" merujuk keluarga model OpenAI yang sama).
+        - same_family = false jika keduanya arsitektur/produk yang BERBEDA meskipun namanya mirip
+          atau satu nama termuat di dalam yang lain (contoh: "ResNet" vs "DenseNet" BERBEDA;
+          "Net" bukan keluarga induk dari keduanya).
+        - Jika ragu, pilih false.
+        - canonical: pilih nama yang paling umum dipakai komunitas sebagai induk keluarga.
+        """
+        try:
+            response = self.client.models.generate_content(
+                model=self.model_name,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=FamilyDecision,
+                    temperature=0.0,
+                ),
+            )
+        except Exception as e:
+            _raise_if_daily_limit(e)
+            raise
+
+        time.sleep(6.0)
+        try:
+            return FamilyDecision.model_validate_json(response.text)
+        except Exception:
+            return FamilyDecision(same_family=False, canonical=name_a, reason="parse error")
+
+    @retry(
+        wait=wait_exponential(multiplier=2, min=10, max=90),
         stop=stop_after_attempt(6),
         retry=retry_if_exception(_is_retryable),
         before_sleep=print_retry
@@ -267,6 +317,10 @@ class GeminiClient:
            You MUST also provide the 'target_type' (e.g. Method, Dataset, Paper) they want to count.
         2. 'thematic': The user is asking a broad, narrative, or trend question (e.g., "what are the trends in object detection?").
         3. 'entity': The user is asking about a specific entity or local connections (e.g., "what does ResNet use?", "who wrote YOLO?").
+           This INCLUDES asking which versions/variants of a named entity exist or were tested
+           (e.g. "which GPT versions were tested?", "varian Llama apa saja yang dievaluasi?") —
+           this is NOT 'counting', even though it lists multiple items; set search_query to the
+           entity/family name (e.g. "GPT", "Llama").
         4. 'structural': The user asks about connections ACROSS papers / the whole graph structure —
            shared or bridging entities (e.g., "what method/dataset appears in multiple papers?",
            "apa yang menjadi jembatan antar paper?", "what is common across the papers?").
@@ -309,12 +363,23 @@ class GeminiClient:
         prompt = f"""
         You are an AI assistant answering questions about academic papers.
         Answer the user's question using ONLY the provided context.
-        If the answer is not contained in the context, explicitly state that you don't know based on the provided documents.
-        Do not make up information.
-        
+
+        RULES:
+        1. If the answer is not contained in the context, explicitly state that you don't know
+           based on the provided documents. NEVER make up information.
+        2. Quote specific figures, percentages, and proper names EXACTLY as they appear in the
+           context (write "58.19% of cases", not "around 58%"). Do not paraphrase away the numbers.
+        3. Be COMPLETE: if several items in the context answer the question, list all of them,
+           not just the first or most prominent one.
+        4. The context groups facts by relation type under "RELASI LANGSUNG", and shows
+           multi-step chains under "RELASI TIDAK LANGSUNG" in the form `A → relation → B`.
+           To answer a question that spans several steps, follow those chains
+           (e.g. Paper → written_by → Author, then Author → affiliated_with → Institution).
+        5. Answer in the SAME LANGUAGE as the question.
+
         Context:
         {context}
-        
+
         Question:
         {query}
         """

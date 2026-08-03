@@ -32,6 +32,9 @@ data/processed/*
 !data/raw/.gitkeep
 !data/processed/.gitkeep
 
+# Corpus backups (hasil build yang disimpan supaya tidak perlu rebuild)
+backups/
+
 # IDEs & OS Files
 .vscode/
 .idea/

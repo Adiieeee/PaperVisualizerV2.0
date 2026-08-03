@@ -51,19 +51,18 @@ def _load_checkpoint():
 # ──────────────────────────────────────────
 # Visualization helper
 # ──────────────────────────────────────────
-def _generate_and_open_visualization(graph, output_path: str = "data/processed/graph_visualization.html"):
-    """Generate the interactive HTML and open it in the default browser.
-    Wrapped so a visualization hiccup never discards a completed (quota-costly) build."""
+def _generate_visualization(graph, output_path: str = "data/processed/graph_visualization.html"):
+    """Generate the standalone interactive HTML (portable snapshot; not opened automatically —
+    use `python server.py` for the live app). Wrapped so a visualization hiccup never discards
+    a completed (quota-costly) build."""
     try:
-        import webbrowser
-        from pathlib import Path
         from src.graph.visualizer import GraphVisualizer
 
         GraphVisualizer(graph).generate_html(output_path)
-        webbrowser.open(Path(output_path).resolve().as_uri())
-        print(f"[Viz] Opened {output_path} in your default browser.")
+        print(f"[Viz] Saved standalone visualization to {output_path}")
+        print("[Viz] Run 'python server.py' for the interactive app + chatbot.")
     except Exception as e:
-        print(f"[Viz] Could not generate/open the visualization: {e}")
+        print(f"[Viz] Could not generate the visualization: {e}")
         print("[Viz] The graph is still saved; you can generate it manually later.")
 
 
@@ -177,6 +176,8 @@ def build_pipeline():
     graph_builder.add_knowledge_with_provenance(knowledge_items)
     graph_builder.link_models_to_papers(paper_metadata)  # B2: link popular model names to papers
     graph_builder.reclassify_noncanonical_papers(paper_metadata)  # drop cited-paper leakage (e.g. NiN)
+    graph_builder.link_entity_families()      # hubungkan varian ber-versi ke node keluarga
+    graph_builder.merge_family_aliases(llm)   # satukan keluarga yg beda penyebutan (ChatGPT vs GPT)
     graph_builder.save_graph("data/processed/graph.graphml")
     
     # 6. Community Detection & Summarization
@@ -219,8 +220,8 @@ def build_pipeline():
 
     print("=== Build Pipeline Complete ===")
 
-    # 8. Auto-generate + open the interactive visualization (from the in-memory graph).
-    _generate_and_open_visualization(graph_builder.graph)
+    # 8. Generate the standalone visualization snapshot (not auto-opened).
+    _generate_visualization(graph_builder.graph)
 
 
 # ──────────────────────────────────────────
@@ -241,17 +242,42 @@ def query_pipeline(query: str):
     print("A:", answer)
     print("="*40 + "\n")
 
+USAGE = """
+GraphRAG Paper Explorer
+=======================
+
+  python main.py build                      Bangun knowledge graph dari PDF di data/raw/
+  python main.py query -q "pertanyaan"      Tanya lewat terminal
+
+Perintah lain:
+  python server.py                          Web app: visualisasi + chatbot (http://127.0.0.1:8000)
+  python evaluate.py                        Ukur akurasi retrieval (gratis, tanpa LLM)
+  python corpus.py list                     Kelola korpus (backup / clear / restore)
+
+Contoh:
+  python main.py build
+  python main.py query -q "Metode apa yang paling banyak dipakai?"
+"""
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="GraphRAG Paper Explorer CLI")
-    parser.add_argument("mode", choices=["build", "query"], help="Mode of operation")
-    parser.add_argument("--query", "-q", type=str, help="The query string (required for 'query' mode)")
-    
+    parser = argparse.ArgumentParser(
+        description="GraphRAG Paper Explorer CLI", add_help=True
+    )
+    # mode dibuat opsional supaya `python main.py` menampilkan panduan yang jelas,
+    # bukan error argparse yang membingungkan.
+    parser.add_argument("mode", nargs="?", choices=["build", "query"],
+                        help="build = bangun graph, query = tanya")
+    parser.add_argument("--query", "-q", type=str, help="Pertanyaan (untuk mode 'query')")
+
     args = parser.parse_args()
-    
-    if args.mode == "build":
+
+    if args.mode is None:
+        print(USAGE)
+    elif args.mode == "build":
         build_pipeline()
     elif args.mode == "query":
         if not args.query:
-            print("Error: --query is required when mode is 'query'")
+            print('Error: mode "query" butuh pertanyaan.\n')
+            print('  Contoh: python main.py query -q "Metode apa yang paling banyak dipakai?"')
         else:
             query_pipeline(args.query)

@@ -64,16 +64,22 @@ class GraphRAGEngine:
         else: # entity
             print("[2] Executing Hybrid Entity Search")
             search_q = routing.search_query or user_query
-            resolved_node = self.resolver.resolve_entity(search_q, context_query=user_query)
-            # If the router's refined query missed, try the full user query too.
-            if not resolved_node and search_q != user_query:
-                resolved_node = self.resolver.resolve_entity(user_query, context_query=user_query)
+            # Roadmap 1.2: pertanyaan bisa menyebut >1 entitas ("SycEval dan ELEPHANT").
+            nodes = self.resolver.resolve_entities(search_q, context_query=user_query)
+            if not nodes and search_q != user_query:
+                nodes = self.resolver.resolve_entities(user_query, context_query=user_query)
 
-            if resolved_node:
-                print(f"[3] Traversing graph from '{resolved_node}' (multi-hop)")
-                trav_result = self.traversal.traverse(resolved_node, max_hops=2)
+            if nodes:
+                # Budget konteks per entitas. Terukur: membagi budget (150//n) justru memotong
+                # sebelum hop-2 pada node hub, sehingga fakta seperti Author->Institution hilang.
+                # 125/entitas sudah cukup dan konteks total jenuh (~31K char untuk 2 entitas)
+                # karena dibatasi ukuran graph itu sendiri.
+                budget = 150 if len(nodes) == 1 else 125
+                print(f"[3] Traversing graph from {nodes} (multi-hop, budget {budget}/entitas)")
                 context_parts.append("Graph Context:")
-                context_parts.append(self.traversal.format_traversal_context(trav_result))
+                for n in nodes:
+                    trav_result = self.traversal.traverse(n, max_hops=2, max_rels=budget)
+                    context_parts.append(self.traversal.format_traversal_context(trav_result))
             else:
                 print("[3] Node not found, falling back to Chunk search")
                 chunks = self.resolver.search_chunks(search_q)

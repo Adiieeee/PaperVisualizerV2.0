@@ -45,10 +45,15 @@ def retrieval_context(case, resolver, traversal, analytics):
         return " ; ".join(f"{n} ({c} papers)" for n, _ps, c in bridges), None
     if intent == "thematic":
         return " ".join(resolver.search_communities(case["q"])), None
-    # entity
-    node = resolver.resolve_entity(case["q"], context_query=case["q"])
-    if node:
-        return traversal.format_traversal_context(traversal.traverse(node, max_hops=2)), node
+    # entity — cerminkan engine: bisa >1 entitas (roadmap 1.2), budget konteks dibagi
+    nodes = resolver.resolve_entities(case["q"], context_query=case["q"])
+    if nodes:
+        budget = 150 if len(nodes) == 1 else 125
+        text = "\n".join(
+            traversal.format_traversal_context(traversal.traverse(n, max_hops=2, max_rels=budget))
+            for n in nodes
+        )
+        return text, nodes[0]
     return " ".join(resolver.search_chunks(case["q"])), None  # local vector fallback
 
 
