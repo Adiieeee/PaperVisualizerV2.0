@@ -1,5 +1,6 @@
 PyMuPDF
 google-genai
+litellm==1.104.0
 pydantic
 sentence-transformers
 chromadb
