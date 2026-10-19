@@ -9,6 +9,11 @@ from dotenv import load_dotenv
 load_dotenv()
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+# LiteLLM (src/llm/llm_client.py): nama model pakai prefix provider. Groq opsional — tanpa key
+# atau model, alias "general" berjalan tanpa fallback.
+GEMINI_MODEL = os.getenv("GEMINI_MODEL") or "gemini/gemini-flash-lite-latest"
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GROQ_MODEL = os.getenv("GROQ_MODEL") or None
 
 # --- Constants ---
 # Embedding Model (Local CPU)
