@@ -1,4 +1,5 @@
 """llm_client: klasifikasi kuota, parsing, dan konfigurasi fallback. Tanpa jaringan/kuota (router di-fake)."""
+import json
 import os
 import subprocess
 import sys
@@ -104,7 +105,7 @@ def test_gemini_daily_quota_on_general_switches_to_groq():
     out, model = lc.call_llm(MSGS, alias="general", schema=_Decision, router=r)
     assert out.merged_name == "SGD" and model == "openai/gpt-oss-120b"
     assert r.aliases() == ["general", "general_backup"]
-    assert r.calls[1]["response_format"] is _Decision  # skema ikut ke Groq
+    assert r.calls[1]["response_format"] == lc.response_format_for(_Decision)  # skema ikut ke Groq
 
 
 def test_gemini_daily_quota_on_dedup_never_uses_groq():
@@ -156,7 +157,8 @@ def test_schema_result_and_model_name():
     out, model = lc.call_llm(MSGS, alias="dedup", schema=_Decision, router=r)
     assert out == _Decision(is_duplicate=True, merged_name="SGD")
     assert model == "gemini-flash-lite-latest"
-    assert r.calls[0]["model"] == "dedup" and r.calls[0]["response_format"] is _Decision
+    assert r.calls[0]["model"] == "dedup"
+    assert r.calls[0]["response_format"] == lc.response_format_for(_Decision)
 
 
 def test_parse_failure_is_not_retried_by_default():
@@ -170,6 +172,23 @@ def test_parse_failure_is_not_retried_by_default():
 def test_empty_text_returns_empty_string(empty):
     out, _ = lc.call_llm(MSGS, router=_FakeRouter(content=empty))
     assert out == ""
+
+
+def test_gemini_schema_keeps_optional_fields_optional():
+    # Regresi terukur: kelas Pydantic mentah -> LiteLLM strict -> `description` jadi wajib dan
+    # Gemini menamai entitas berbeda dari jalur google-genai lama ("MedQuad dataset" -> "MedQuad").
+    from litellm.llms.vertex_ai.gemini.vertex_and_google_ai_studio_gemini import VertexGeminiConfig
+    from src.config import ExtractedKnowledge
+    cfg = VertexGeminiConfig().map_openai_params(
+        non_default_params={"response_format": lc.response_format_for(ExtractedKnowledge)},
+        optional_params={}, model="gemini-flash-lite-latest", drop_params=False)
+    props = cfg["response_schema"]["properties"]
+    assert props["entities"]["items"]["required"] == ["name", "type"]
+    assert props["relationships"]["items"]["required"] == ["source_entity", "target_entity", "relation_type"]
+    assert "$ref" not in json.dumps(cfg["response_schema"])  # $defs dibongkar untuk Gemini
+    # Optional dikirim seperti google-genai: string nullable, bukan anyOf
+    desc = props["entities"]["items"]["properties"]["description"]
+    assert desc["type"] == "string" and desc["nullable"] is True and "anyOf" not in desc
 
 
 # --- Konfigurasi router ---

@@ -27,6 +27,11 @@ from pydantic import BaseModel, ValidationError
 from src.config import GEMINI_API_KEY, GEMINI_MODEL, GROQ_API_KEY, GROQ_MODEL
 
 litellm.suppress_debug_info = True
+# Build = ribuan panggilan: DeprecationWarning `temperature` Gemini 3+ (WARNING, tiap panggilan) dan
+# dump body error Router (ERROR, dicetak dua kali) menenggelamkan output. Error-nya tetap sampai ke
+# caller sebagai exception; perpindahan ke Groq dicatat oleh logger "llm" di bawah.
+logging.getLogger("LiteLLM").setLevel(logging.ERROR)
+logging.getLogger("LiteLLM Router").setLevel(logging.CRITICAL)
 log = logging.getLogger("llm")
 
 
@@ -111,6 +116,38 @@ def _complete(router: Router, alias: str, kwargs: dict):
         return _completion_daily_checked(router, backup, kwargs)
 
 
+def _flatten_optional(node):
+    """`Optional[X]` Pydantic = anyOf[X, null] -> X + nullable (bentuk yang dikirim google-genai)."""
+    if isinstance(node, list):
+        return [_flatten_optional(n) for n in node]
+    if not isinstance(node, dict):
+        return node
+    node = {k: _flatten_optional(v) for k, v in node.items()}
+    variants = node.get("anyOf")
+    if isinstance(variants, list) and len(variants) == 2 and {"type": "null"} in variants:
+        (inner,) = [v for v in variants if v != {"type": "null"}]
+        if "type" in inner:
+            node.pop("anyOf")
+            node.pop("default", None)
+            node = {**inner, **node, "nullable": True}
+    return node
+
+
+def response_format_for(schema: Type[BaseModel]) -> dict:
+    """Skema JSON NON-strict dari model Pydantic, sedekat mungkin dengan yang dikirim google-genai.
+    Kelas Pydantic yang diberikan langsung diubah LiteLLM ke mode strict ala OpenAI: SEMUA field
+    jadi wajib (mis. `description` Optional di Entity/Relationship) -> output Gemini berubah dan
+    token deskripsi wajib bertambah. Field wajib dibiarkan persis seperti di Pydantic."""
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": schema.__name__,
+            "schema": _flatten_optional(schema.model_json_schema()),
+            "strict": False,
+        },
+    }
+
+
 _router: Optional[Router] = None
 
 
@@ -141,7 +178,7 @@ def call_llm(
     router = router or _get_router()
     kwargs = {"messages": messages, "temperature": temperature, **extra}
     if schema is not None:
-        kwargs["response_format"] = schema
+        kwargs["response_format"] = response_format_for(schema)
 
     last_err = None
     for attempt in range(max_parse_retries + 1):
