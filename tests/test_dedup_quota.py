@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from src.config import DedupDecision, Entity, ExtractedKnowledge
+from src.config import DedupDecision, Entity, ExtractedKnowledge, Relationship
 from src.extraction import deduplicator as D
 from src.llm.llm_client import LLMQuotaError
 
@@ -60,7 +60,7 @@ def test_resume_continues_from_interrupted_item_without_redoing_decisions(paths)
 
     master, mapping = D._load_dedup_checkpoint()
     kl = _knowledge()
-    resume_idx = sum(1 for k in kl if all(e.name in mapping for e in k.entities))  # = main.py
+    resume_idx = D.dedup_resume_index(kl, mapping)  # dipakai main.py
     assert resume_idx == 1
 
     llm = _FakeLLM()
@@ -84,3 +84,64 @@ def test_old_dedup_checkpoint_without_models_still_loads(paths):
     assert D._load_dedup_checkpoint()[1] == {"A": "A"}
     assert D._load_dedup_decision_models() == {}
 
+
+# --- Resume: item yang dilewati tetap dipetakan, awalan (bukan jumlah), indeks normalisasi ---
+
+class _MergeLLM:
+    """Menggabungkan setiap kandidat ke kandidat teratas (meniru keputusan merge LLM)."""
+
+    def __init__(self):
+        self.calls, self.last_model = [], "gemini-3.5-flash-lite"
+
+    def resolve_dedup(self, cand, typ, candidates):
+        self.calls.append(cand)
+        return DedupDecision(is_duplicate=True, reason="sinonim", merged_name=candidates[0])
+
+
+def _kl_with_rels():
+    def k(a, b):
+        return ExtractedKnowledge(
+            entities=[Entity(name=a, type="Method"), Entity(name=b, type="Dataset")],
+            relationships=[Relationship(source_entity=a, target_entity=b, relation_type="uses_dataset")])
+    return [k("Stochastic Gradient Descent", "MedQuad"), k("SGD optimizer", "MedQuad")]
+
+
+def _resume(kl, llm):
+    master, mapping = D._load_dedup_checkpoint()
+    dd = D.HybridDeduplicator(llm, _FakeEmbed())
+    for t, ents in master.items():
+        dd.master_list[t] = {n: {"embedding": d["embedding"]} for n, d in ents.items()}
+    dd.name_mapping_global = mapping
+    dd.rebuild_normalized_index()
+    idx = D.dedup_resume_index(kl, mapping)
+    dd.process_extracted_knowledge(kl, resume_from_idx=idx)
+    return dd, idx
+
+
+def test_resume_applies_saved_mapping_to_skipped_items(paths):
+    # Run penuh: "SGD optimizer" digabung ke "Stochastic Gradient Descent".
+    D.HybridDeduplicator(_MergeLLM(), _FakeEmbed()).process_extracted_knowledge(_kl_with_rels())
+    # Re-run (mis. build gagal sesudah dedup): knowledge dimuat ulang dengan nama ASLI.
+    kl = _kl_with_rels()
+    llm = _MergeLLM()
+    _, idx = _resume(kl, llm)
+    assert idx == 2 and llm.calls == []  # semua sudah diputuskan; tanpa LLM
+    assert [e.name for e in kl[1].entities] == ["Stochastic Gradient Descent", "MedQuad"]
+    assert kl[1].relationships[0].source_entity == "Stochastic Gradient Descent"
+
+
+def test_resume_index_is_prefix_not_count():
+    def k(*names):
+        return ExtractedKnowledge(entities=[Entity(name=n, type="Method") for n in names])
+    kl = [k("A"), k("B", "C"), k("A")]  # item 1 terputus (C belum), item 2 kebetulan lengkap
+    assert D.dedup_resume_index(kl, {"A": "A", "B": "B"}) == 1  # jumlah = 2 akan melewati C
+
+
+def test_resume_restores_normalization_index_so_no_llm_call(paths):
+    def k(name):
+        return ExtractedKnowledge(entities=[Entity(name=name, type="Method")])
+    D.HybridDeduplicator(_MergeLLM(), _FakeEmbed()).process_extracted_knowledge([k("ResNet")])
+    llm = _MergeLLM()
+    dd, _ = _resume([k("ResNet"), k("resnet")], llm)
+    assert llm.calls == []  # "resnet" cocok deterministik (case), bukan lewat LLM
+    assert dd.name_mapping_global["resnet"] == "ResNet"

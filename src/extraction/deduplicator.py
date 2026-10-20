@@ -153,6 +153,17 @@ def _load_dedup_checkpoint():
     return data.get("master_list", {}), data.get("name_mapping", {})
 
 
+def dedup_resume_index(knowledge_list, saved_name_mapping: dict) -> int:
+    """Panjang AWALAN item yang semua entitasnya sudah terpetakan di checkpoint. Bukan jumlah:
+    item selesai yang muncul setelah item terputus tidak boleh membuat item terputus terlewati."""
+    idx = 0
+    for k in knowledge_list:
+        if not all(ent.name in saved_name_mapping for ent in k.entities):
+            break
+        idx += 1
+    return idx
+
+
 def _load_dedup_decision_models() -> dict:
     """{kandidat: model} dari checkpoint dedup (kosong untuk checkpoint lama)."""
     if not os.path.exists(DEDUP_CHECKPOINT_PATH):
@@ -307,6 +318,10 @@ class HybridDeduplicator:
         """
         for idx, k in enumerate(knowledge_list):
             if idx < resume_from_idx:
+                # Sudah diputuskan di run sebelumnya, tapi knowledge_list dimuat ulang dari
+                # checkpoint ekstraksi (nama ASLI): terapkan mapping tersimpan, tanpa LLM/embedding.
+                # Tanpa ini nama yang belum di-dedup masuk ke graph setelah resume.
+                self._apply_saved_mapping(k)
                 continue
 
             chunk_name_mapping = {}
@@ -327,6 +342,22 @@ class HybridDeduplicator:
             print(f"  [Dedup] {idx + 1}/{len(knowledge_list)} knowledge items processed.")
 
         return knowledge_list
+
+    def _apply_saved_mapping(self, k):
+        for ent in k.entities:
+            ent.name = self.name_mapping_global.get(ent.name, ent.name)
+        for rel in k.relationships:
+            rel.source_entity = self.name_mapping_global.get(rel.source_entity, rel.source_entity)
+            rel.target_entity = self.name_mapping_global.get(rel.target_entity, rel.target_entity)
+
+    def rebuild_normalized_index(self):
+        """Pulihkan indeks langkah 2 (case/punct/akronim) dari master_list setelah resume. Indeks ini
+        hanya ada di memori; tanpa dia, nama yang semestinya cocok deterministik jatuh ke LLM.
+        Panggil setelah register_acronyms (dipakai oleh _normalize)."""
+        self.normalized_index = {
+            ent_type: {_normalize(name): name for name in entities}
+            for ent_type, entities in self.master_list.items()
+        }
 
     def _save_checkpoint(self):
         _save_dedup_checkpoint(

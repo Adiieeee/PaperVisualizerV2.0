@@ -61,6 +61,14 @@ def _load_checkpoint():
             items.append((None, ExtractedKnowledge.model_validate(entry)))
     return set(payload["done_chunk_ids"]), items
 
+def _stop_for_quota(stage: str, exc: Exception):
+    """Kuota harian habis setelah dedup. Checkpoint ekstraksi + dedup masih ada, jadi re-run
+    setelah reset melewati keduanya dan mengulang hanya tahap graph/komunitas."""
+    print(f"\n[Build] Stopped during {stage}: {exc}")
+    print("[Checkpoint] Extraction + dedup checkpoints kept; re-run 'python main.py build' after the "
+          "quota resets (graph, family merge and community summaries are redone).")
+
+
 def _load_chunk_models() -> dict:
     """{chunk_id: model} dari checkpoint (kosong untuk checkpoint lama yang belum mencatatnya).
     Dipanggil setelah _load_checkpoint, yang sudah menolak JSON korup."""
@@ -176,7 +184,7 @@ def build_pipeline():
 
     # 4. Dedup (with checkpoint support)
     from src.extraction.deduplicator import (
-        _load_dedup_checkpoint, _load_dedup_decision_models, DEDUP_CHECKPOINT_PATH,
+        _load_dedup_checkpoint, _load_dedup_decision_models, dedup_resume_index, DEDUP_CHECKPOINT_PATH,
     )
     dedup = HybridDeduplicator(llm, embed)
     
@@ -193,12 +201,9 @@ def build_pipeline():
                 dedup.master_list[ent_type][name] = {"embedding": data["embedding"]}
         dedup.name_mapping_global = saved_name_mapping
         dedup.decision_models = _load_dedup_decision_models()
-        # Count how many knowledge items were fully processed
-        dedup_resume_idx = sum(
-            1 for k in knowledge_list
-            if all(ent.name in saved_name_mapping for ent in k.entities)
-        )
-        print(f"[Checkpoint] Dedup resuming from knowledge item ~{dedup_resume_idx}/{len(knowledge_list)}")
+        dedup.rebuild_normalized_index()
+        dedup_resume_idx = dedup_resume_index(knowledge_list, saved_name_mapping)
+        print(f"[Checkpoint] Dedup resuming from knowledge item {dedup_resume_idx}/{len(knowledge_list)}")
 
     print("Deduplicating entities...")
     try:
@@ -209,10 +214,9 @@ def build_pipeline():
         print(f"\n[Dedup] Stopped: {e}")
         print(f"[Checkpoint] Dedup progress saved to {DEDUP_CHECKPOINT_PATH}.")
         return
-
-    # Clean up dedup checkpoint after success
-    if os.path.exists(DEDUP_CHECKPOINT_PATH):
-        os.remove(DEDUP_CHECKPOINT_PATH)
+    # Checkpoint dedup TIDAK dihapus di sini, tapi di akhir build bersama checkpoint ekstraksi:
+    # kalau build gagal sesudah ini, re-run melewati dedup (semua item sudah terpetakan) alih-alih
+    # mengulang semua keputusan merge (boros kuota, dan hasilnya bisa berbeda).
 
     # 5. Graph Construction (with provenance: anchors every entity to its source Paper)
     graph_builder = GraphBuilder()
@@ -220,8 +224,11 @@ def build_pipeline():
     graph_builder.link_models_to_papers(paper_metadata)  # B2: link popular model names to papers
     graph_builder.reclassify_noncanonical_papers(paper_metadata)  # drop cited-paper leakage (e.g. NiN)
     graph_builder.link_entity_families()      # hubungkan varian ber-versi ke node keluarga
-    graph_builder.merge_family_aliases(llm)   # satukan keluarga yg beda penyebutan (ChatGPT vs GPT)
-    graph_builder.save_graph("data/processed/graph.graphml")
+    try:
+        graph_builder.merge_family_aliases(llm)  # satukan keluarga yg beda penyebutan (ChatGPT vs GPT)
+    except DailyQuotaExceededError as e:
+        _stop_for_quota("family merge", e)
+        return
     
     # 6. Community Detection & Summarization
     analytics = GraphAnalytics(graph_builder.graph)
@@ -239,8 +246,16 @@ def build_pipeline():
                     "community_id": c['community_id'],
                     "summary": summary
                 })
+            except DailyQuotaExceededError as e:
+                # Gemini DAN Groq habis: berhenti, jangan selesaikan build dengan ringkasan bolong.
+                _stop_for_quota("community summarization", e)
+                return
             except Exception as e:
                 print(f"[Warning] Skipped community {c['community_id']} summarization: {e}")
+
+    # Disimpan SETELAH tahap yang bisa berhenti karena kuota: berhenti di tengah tidak boleh
+    # meninggalkan graph.graphml baru di samping chroma_db/manifest lama (engine menolak start).
+    graph_builder.save_graph("data/processed/graph.graphml")
 
     # 7. Vector DB Storage
     chroma = ChromaStore()
@@ -264,9 +279,11 @@ def build_pipeline():
     except Exception as e:
         print(f"[Integrity] Could not write the manifest: {e}. Create it later with: python corpus.py manifest")
 
-    # Clean up extraction checkpoint after successful completion
-    if os.path.exists(CHECKPOINT_PATH):
-        os.remove(CHECKPOINT_PATH)
+    # Clean up checkpoints after successful completion
+    removed = [p for p in (CHECKPOINT_PATH, DEDUP_CHECKPOINT_PATH) if os.path.exists(p)]
+    for p in removed:
+        os.remove(p)
+    if removed:
         print("[Checkpoint] Cleared all checkpoints (build complete).")
 
     print("=== Build Pipeline Complete ===")

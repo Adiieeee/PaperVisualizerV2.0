@@ -3,6 +3,7 @@ import networkx as nx
 from collections import Counter
 from typing import List, Tuple
 from src.config import ExtractedKnowledge
+from src.llm.llm_client import DailyQuotaExceededError
 from src.security.integrity import atomic_write
 
 class GraphBuilder:
@@ -296,6 +297,8 @@ class GraphBuilder:
         di nama lain — jadi jumlah panggilan LLM sangat sedikit (biasanya 0-3 per korpus).
         LLM dipakai karena ia tahu ChatGPT≈GPT tapi ResNet≠DenseNet; pencocokan string murni
         akan salah menggabungkan keduanya.
+        Kuota harian habis -> DailyQuotaExceededError diteruskan (build berhenti); error lain per
+        pasangan hanya dilewati.
         """
         fams = self.family_nodes()
         names = sorted(fams)
@@ -312,6 +315,8 @@ class GraphBuilder:
                 continue
             try:
                 decision = llm.resolve_family_merge(big, fams.get(big, []), small, fams.get(small, []))
+            except DailyQuotaExceededError:
+                raise  # alias "dedup" tanpa fallback: build harus berhenti, bukan melewati merge
             except Exception as e:
                 print(f"[Builder] Adjudikasi keluarga '{big}' vs '{small}' gagal: {e}")
                 continue
