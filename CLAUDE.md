@@ -4,13 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-GraphRAG Paper Explorer: builds a knowledge graph (NetworkX) from PDFs in `data/raw/`, then answers questions over it by combining graph traversal, ChromaDB vector search, and Gemini generation. The app is an interactive graph visualizer (pyvis/vis.js) with a chatbot panel, served by FastAPI. Docs, UI text and most prompts are in Indonesian; answers are generated in the language of the question.
+GraphRAG Paper Explorer: builds a knowledge graph (NetworkX) from PDFs in `data/raw/`, then answers questions over it by combining graph traversal, ChromaDB vector search, and LLM generation (Gemini via LiteLLM, optional Groq fallback). The app is an interactive graph visualizer (pyvis/vis.js) with a chatbot panel, served by FastAPI. Docs, UI text and most prompts are in Indonesian; answers are generated in the language of the question.
 
-**Hard constraint: $0 budget.** Gemini free tier only (`gemini-flash-lite-latest`), embeddings run locally (`BAAI/bge-small-en-v1.5` on CPU), no paid/cloud services.
+**Hard constraint: $0 budget.** Free tiers without a credit card only: Gemini via Google AI Studio (`gemini/gemini-flash-lite-latest`) as primary, Groq (e.g. `groq/openai/gpt-oss-120b`) as optional fallback, both through LiteLLM (no proxy, no cache). Embeddings run locally (`BAAI/bge-small-en-v1.5` on CPU), never through LiteLLM. No paid/cloud services.
 
 ## Commands
 
-Setup: `pip install -r requirements.txt` (`requirements-dev.txt` adds pytest/httpx), and put `GEMINI_API_KEY=...` in `.env` (copy `.env.example`; loaded in `src/config.py`). `requirements.lock.txt` is a reproducibility reference (Python 3.14.6, Windows), not the install path.
+Setup: `pip install -r requirements.txt` (`requirements-dev.txt` adds pytest/httpx), and put `GEMINI_API_KEY=...` in `.env` (copy `.env.example`; loaded in `src/config.py`). Optional: `GROQ_API_KEY` + `GROQ_MODEL` enable the Groq fallback (either empty = no fallback); `GEMINI_MODEL` overrides the Gemini model (LiteLLM `provider/model` names). `requirements.lock.txt` is a reproducibility reference (Python 3.14.6, Windows), not the install path.
 
 ```powershell
 python main.py build                    # PDFs in data/raw/ -> graph.graphml + chroma_db + manifest.json (uses LLM quota)
@@ -22,6 +22,7 @@ python -m pytest tests -q               # unit/security tests: no network, no LL
 python corpus.py list|backup <name>|clear|restore <name>   # swap paper corpora without rebuilding
 python corpus.py manifest               # write manifest.json for the ACTIVE corpus (no rebuild)
 python corpus.py audit                  # read-only scan of graph + chunks for injection-like text
+python -m scripts.test_llm_client       # live LiteLLM smoke test: Gemini, simulated-quota Groq fallback, schemas (~6 requests)
 ```
 
 - `evaluate.py` is the retrieval regression harness; run it after any query-time change and compare the score before → after. It has no per-case filter. Cases with `e2e_only` / `expected_refuse` are excluded from the retrieval score and only graded by `--e2e` (`must_not_contain` flags leaked/obeyed injected content).
@@ -52,6 +53,14 @@ Two pipelines share `data/processed/` (gitignored) as their interface: `graph.gr
 
 Then `generate_final_answer(query, blocks)` with the context as typed blocks `(kind, text)` — `graph` / `text` / `community` (`src/llm/prompts.py`). Each query = 2 LLM calls (route + generate). The context format and the generation prompt's rules about "RELASI LANGSUNG / TIDAK LANGSUNG" are coupled — change them together (`tests/test_prompt.py` pins both).
 
+### LLM layer (`src/llm/llm_client.py`, `src/llm/gemini_client.py`)
+
+Every LLM call goes `GeminiClient` method → `call_llm(alias=...)` → LiteLLM `Router`. `GeminiClient` (name kept for history) only builds prompts, parses Pydantic results, retries transient errors with tenacity, and sleeps 6 s per call; `last_model` holds the model that actually answered. Two aliases:
+- `general` (extraction, paper metadata, community summaries, query routing, final answer): Gemini; switches to Groq **only** when Gemini returns a daily-quota 429. Per-minute 429s, 5xx and timeouts are re-raised and retried on Gemini by tenacity. The fallback is done in `call_llm`, deliberately not via Router `fallbacks=` (those switch on every error); the Router has `num_retries=0` and no cooldowns so retries don't stack.
+- `dedup` (`resolve_dedup`, `resolve_family_merge`): Gemini only, never falls back — merge decisions must come from one model.
+
+Structured output is sent via `response_format_for(schema)`: a non-strict JSON schema with Optional fields flattened to nullable. Passing the Pydantic class directly makes LiteLLM use OpenAI strict mode (every field required), which measurably changed Gemini's extraction output. The answering model is recorded per chunk (`checkpoint_extraction.json` → `data/processed/extraction_models.json`) and per dedup decision (`checkpoint_dedup.json`, `similarity_debug.csv`).
+
 ### App (`server.py`, `src/security/guards.py`, `src/graph/visualizer.py`)
 
 `GraphVisualizer.build_html()` renders pyvis (inline resources; the Bootstrap CDN tags pyvis adds are stripped so the page is fully offline) and injects a large custom panel (`_PANEL_CSS/_PANEL_HTML/_PANEL_JS` string constants + a `GR_DATA` JSON blob) before `</body>`. The panel's chat box calls `POST /api/chat`, which only exists under `server.py` (the static snapshot degrades gracefully). `server.py` exposes `create_app(engine, html)` (importable without torch); the engine and graph are loaded **once at startup** in `main()` — restart `server.py` after a rebuild or `corpus.py restore`. `DESIGN_REFERENCE.md` is the UI spec. Write HTML as UTF-8 yourself (pyvis's `write_html` uses the OS codepage and crashes on Windows).
@@ -63,6 +72,7 @@ Then `generate_final_answer(query, blocks)` with the context as typed blocks `(k
 - **Request guard order** (`ChatGuard`, pure ASGI, runs before FastAPI parses the body): body size → `Content-Type: application/json` → Origin → rate limit → body read cap → concurrency. The fixed `Host` allow-list (`config.ALLOWED_HOSTS`) is what stops DNS rebinding — comparing Origin to the request's own Host would not.
 - **Frontend:** `renderMarkdown` must escape first, then add whitelisted tags; use `esc()` on every graph-derived value put into `innerHTML`. CSP `script-src` is hash-based (`build_index_csp`) — a new inline `<script>` is fine (hash recomputed), an inline `onclick=` attribute or an external script is not.
 - **Build stays CLI-only.** Do not expose build/reindex over HTTP.
+- **Second provider:** when the Groq fallback triggers, user questions and paper chunks are sent to Groq too. The prompt-injection defenses were tuned on Gemini; `python evaluate.py --e2e` is the way to re-check them on another model.
 - **Invisible/escape characters:** the file-writing tooling used in past sessions decodes `\uXXXX` in content into literal characters (and literal zero-width chars vanish on copy). Build such characters with `chr()` (see `sanitize.py`; `tests/test_sanitize.py` guards it).
 - **Artifacts:** `manifest.json` (embedding model + revision, graph SHA-256, counts) is verified at engine start (`check_artifacts`). After a legitimate rebuild it is rewritten by `build`; after changing `EMBEDDING_MODEL_NAME/REVISION` the corpus must be rebuilt. Checkpoints and `graph.graphml` are written atomically (`atomic_write*`).
 
@@ -72,9 +82,11 @@ Then `generate_final_answer(query, blocks)` with the context as typed blocks `(k
 - **Synthetic relations** `mentioned_in` and `variant_of` are added by the builder, not the LLM (`variant_of` is not in `RELATION_TYPES`). They are excluded from degree counts in both `analytics.get_counting_stats` and `visualizer._insights` — keep the two in sync.
 - **Adding an entity/relation type** touches `config.py` Literals, the extraction prompt in `gemini_client.py`, and the visualizer's `NODE_COLORS`/`EDGE_COLORS`/`*_DESCRIPTIONS`.
 - **Vector layer is protected.** Post-extraction cleaning, author normalization, and graph post-processing are graph-only by design; don't change them in ways that alter chunk embeddings, the embedding-based dedup, or the ChromaDB collections without checking the effect on retrieval.
-- **Build-time changes are expensive.** The extraction checkpoint is deleted on successful completion, so any change to extraction, dedup, or graph building means re-extracting every chunk with LLM quota. Prefer query-time changes (measurable free with `evaluate.py`) and `corpus.py backup` before `clear`. `chroma_db` is upserted, never wiped by `build` — stale chunks from a previous corpus survive unless you `corpus.py clear`.
-- **Quota/rate handling**: every Gemini call `time.sleep(6.0)`s afterward (~10 req/min). Daily-quota 429s raise `DailyQuotaExceededError` (not retried); `build` prints a message and returns, and re-running resumes from the checkpoints. `server.py` chat and `evaluate.py --e2e` consume the same daily quota.
-- **Dead code**: `src/extraction/extractor.py` (`KnowledgeExtractor`), `GraphBuilder.add_knowledge`, `load_graph`, and `traverse_1_hop` are unused by `main.py`/`engine.py`. The live build path calls `GeminiClient.extract_entities` and `add_knowledge_with_provenance` directly.
+- **Build-time changes are expensive.** The extraction and dedup checkpoints are kept until the build completes and deleted only then, so any change to extraction, dedup, or graph building means re-extracting every chunk with LLM quota. Prefer query-time changes (measurable free with `evaluate.py`) and `corpus.py backup` before `clear`. `chroma_db` is upserted, never wiped by `build` — stale chunks from a previous corpus survive unless you `corpus.py clear`.
+- **Quota/rate handling**: every LLM call `time.sleep(6.0)`s afterward (~10 req/min). Daily-quota detection is a message match (`PerDay` / `per day`) in `llm_client.is_daily_quota_error`, only tested against synthetic errors. When no fallback is left, `DailyQuotaExceededError` (= `LLMQuotaError`) is raised and not retried. `build` then stops with a message at whatever stage hit it (extraction, dedup after saving its checkpoint, family merge, community summaries) and re-running resumes from the checkpoints. `graph.graphml` is saved only after the last quota-dependent stage. `server.py` chat and `evaluate.py --e2e` consume the same daily quotas.
+- **Dedup resume** (`main.py` + `deduplicator.py`): knowledge is reloaded from the extraction checkpoint with **raw** names, so skipped items get the saved mapping applied (`_apply_saved_mapping`). The resume point is the completed *prefix* (`dedup_resume_index`), and `rebuild_normalized_index()` restores the in-memory step-2 index. `similarity_debug.csv` is still overwritten on every run, including resumes.
+- **`import litellm` order**: importing litellm before `src.llm.llm_client` fetches its model cost map from GitHub. `llm_client` sets `LITELLM_LOCAL_MODEL_COST_MAP` before importing; tests also set it in `conftest.py`. Keep that order in new code.
+- **Dead code**: `src/extraction/extractor.py` (`KnowledgeExtractor`), `GraphBuilder.add_knowledge`, `load_graph`, and `traverse_1_hop` are unused by `main.py`/`engine.py`. The live build path calls `GeminiClient.extract_entities` and `add_knowledge_with_provenance` directly. `google-genai` is no longer used or required (everything goes through LiteLLM).
 - **Local-only docs**: internal planning/spec/report docs are gitignored (see `.gitignore`) and may be absent in a fresh clone. Where present, most are stale — trust the code over them. Exception: a gitignored plan file the user asks you to work on is authoritative for that task; read it fully first and follow its working rules.
 
 ## Workflow conventions

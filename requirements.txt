@@ -1,8 +1,7 @@
 # Dependensi langsung, dengan batas kompatibel (versi teruji di catatan kanan).
 # Untuk instalasi yang persis sama dengan yang diuji, lihat requirements.lock.txt.
 PyMuPDF>=1.28,<2             # teruji 1.28.0
-google-genai>=2.11,<3        # teruji 2.11.0
-litellm==1.104.0             # dipin persis (supply chain: 1.82.7/1.82.8 pernah disusupi)
+litellm==1.104.0             # dipin persis (supply chain: 1.82.7/1.82.8 pernah disusupi); Gemini + Groq
 pydantic>=2.13,<3            # teruji 2.13.4
 sentence-transformers>=5.6,<6  # teruji 5.6.0
 chromadb>=1.5,<2             # teruji 1.5.9
