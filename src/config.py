@@ -18,6 +18,22 @@ GROQ_MODEL = os.getenv("GROQ_MODEL") or None
 # --- Constants ---
 # Embedding Model (Local CPU)
 EMBEDDING_MODEL_NAME = "BAAI/bge-small-en-v1.5"
+# Revisi (commit) model yang dipin: perubahan bobot di hub tidak boleh mengubah ruang embedding diam-diam.
+# Nilai ini = snapshot yang membangun korpus saat ini. Mengubahnya (atau model di atas) berarti korpus
+# harus dibangun ulang — manifest (src/security/integrity.py) akan menolak start bila tidak cocok.
+EMBEDDING_MODEL_REVISION = "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a"
+EMBEDDING_DIMENSION = 384  # bge-small-en-v1.5
+
+# --- Security limits (lihat SECURITY.md). Semua batas keras ada di kode, bukan di prompt. ---
+ANSWER_MAX_OUTPUT_TOKENS = 2048          # cap biaya/latensi jawaban akhir
+MAX_CHAT_QUERY_LENGTH = 500              # panjang pertanyaan maksimum di /api/chat
+MAX_CHAT_BODY_BYTES = 10_000             # ukuran body maksimum di /api/chat (juga untuk body chunked)
+CHAT_RATE_LIMIT_MAX = 8                  # per IP per jendela; 1 chat butuh >=12 dtk (2 panggilan + sleep 6)
+CHAT_RATE_LIMIT_WINDOW_SECONDS = 60
+CHAT_MAX_CONCURRENT = 2                  # chat yang boleh berjalan bersamaan (tiap chat = 2 panggilan Gemini)
+ALLOWED_HOSTS = ("127.0.0.1", "localhost")  # allow-list Host tetap (anti DNS rebinding)
+MAX_PDF_PAGES = 500                      # PDF di atas ini dilewati saat ingest
+MAX_PDF_BYTES = 50 * 1024 * 1024
 
 # Dedup
 DEDUP_SIMILARITY_THRESHOLD = 0.85  # Optimized threshold after diagnostic analysis (catches genuine synonyms, reduces LLM noise)
@@ -75,9 +91,8 @@ def load_paper_metadata() -> dict:
 
 
 def save_paper_metadata(metadata: dict):
-    os.makedirs(os.path.dirname(PAPER_METADATA_PATH), exist_ok=True)
-    with open(PAPER_METADATA_PATH, "w", encoding="utf-8") as f:
-        json.dump(metadata, f, ensure_ascii=False, indent=2)
+    from src.security.integrity import atomic_write_json  # lazy: integrity imports config
+    atomic_write_json(PAPER_METADATA_PATH, metadata, indent=2)
 
 
 def load_model_to_paper() -> dict:

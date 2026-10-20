@@ -1,7 +1,27 @@
 import json
+import re
 from collections import Counter
 from pyvis.network import Network
 import networkx as nx
+
+# pyvis menyisipkan Bootstrap dari CDN (dengan SRI) walau cdn_resources="in_line". Panel kita tidak
+# memakainya, dan itu satu-satunya dependensi eksternal saat runtime — melepasnya membuat halaman
+# benar-benar offline (DESIGN_REFERENCE §1.2) dan memungkinkan CSP tanpa origin eksternal.
+_BOOTSTRAP_TAG_RE = re.compile(
+    r"<(?:link|script)\b[^>]*cdn\.jsdelivr\.net/npm/bootstrap[^>]*>(?:\s*</script\s*>)?",
+    re.IGNORECASE,
+)
+_EXTERNAL_REF_RE = re.compile(r"""<(?:script|link|img|iframe)\b[^>]*\b(?:src|href)\s*=\s*["']https?://""", re.IGNORECASE)
+
+# Karakter yang tidak boleh muncul mentah di dalam <script>. Ditulis sebagai escape JSON (\\uXXXX)
+# yang dibangun via chr(): "<" / "<!--" bisa memecah blok skrip, U+2028/2029 memecah literal JS lama.
+_SCRIPT_UNSAFE_RE = re.compile("[<>&" + chr(0x2028) + chr(0x2029) + "]")
+
+
+def _json_for_script(obj) -> str:
+    """JSON yang aman ditempel di dalam <script>: <, >, &, U+2028, U+2029 -> escape JSON (\\uXXXX)."""
+    raw = json.dumps(obj, ensure_ascii=False)
+    return _SCRIPT_UNSAFE_RE.sub(lambda m: f"{chr(92)}u{ord(m.group(0)):04x}", raw)
 
 
 def _darken_hex(hex_color: str, factor: float = 0.7) -> str:
@@ -22,6 +42,12 @@ def _truncate(s: str, n: int = 28) -> str:
 #    braces don't fight with Python f-strings. Data is passed in via a GR_DATA JSON blob. ──
 _PANEL_CSS = """
 * { box-sizing: border-box; }
+/* Pengganti bagian Bootstrap yang dulu memberi tampilan ini (CDN dilepas: DESIGN_REFERENCE §1.2
+   "offline-ready", canvas mengisi seluruh viewport). Judul pyvis selalu kosong -> disembunyikan. */
+html, body { margin: 0; }
+body { line-height: 1.5; }
+body > center { display: none; }
+.card { width: 100%; }
 :root {
   --accent: #818cf8;
   --accent-dim: rgba(129,140,248,0.18);
@@ -470,7 +496,7 @@ _PANEL_JS = """
     item.setAttribute("data-type", t);
     item.innerHTML =
       '<span class="gr-dot" style="background:' + TYPE_COLORS[t] + '"></span>' +
-      '<span class="gr-lname">' + t + '</span>' +
+      '<span class="gr-lname">' + esc(t) + '</span>' +
       '<span class="gr-count">' + cnt + '</span>';
     item.addEventListener("click", function () { highlightType(t); });
     list.appendChild(item);
@@ -545,7 +571,9 @@ _PANEL_JS = """
     var box = document.getElementById("gr-edge-desc");
     if (!box) return;
     if (rel === "all") { box.style.display = "none"; box.innerHTML = ""; return; }
-    box.innerHTML = (GR_DATA.EDGE_DESCRIPTIONS && GR_DATA.EDGE_DESCRIPTIONS[rel]) || rel;
+    // EDGE_DESCRIPTIONS = HTML tepercaya dari konstanta Python; fallback `rel` berasal dari file
+    // graph (data), jadi WAJIB di-escape.
+    box.innerHTML = (GR_DATA.EDGE_DESCRIPTIONS && GR_DATA.EDGE_DESCRIPTIONS[rel]) || esc(rel);
     box.style.display = "block";
   }
 
@@ -581,7 +609,7 @@ _PANEL_JS = """
     var html = '<option value="all">-- Tampilkan Semua --</option>';
     rels.forEach(function (rel) {
       var label = rel.replace(/_/g, " ").replace(/\\b\\w/g, function (c) { return c.toUpperCase(); });
-      html += '<option value="' + rel + '">' + label + " (" + counts[rel] + ")</option>";
+      html += '<option value="' + esc(rel) + '">' + esc(label) + " (" + Number(counts[rel]) + ")</option>";
     });
     sel.innerHTML = html;
     sel.addEventListener("change", function () { filterEdges(sel.value); });
@@ -595,7 +623,7 @@ _PANEL_JS = """
       return (TYPE_COUNTS[t] || 0) > 0;
     }).map(function (t) {
       return '<div class="gr-tip-row"><span class="gr-dot" style="background:' + TYPE_COLORS[t] +
-             '"></span><span><b>' + t + '</b> &mdash; ' + (TYPE_DESCRIPTIONS[t] || "") + '</span></div>';
+             '"></span><span><b>' + esc(t) + '</b> &mdash; ' + (TYPE_DESCRIPTIONS[t] || "") + '</span></div>';
     }).join("");
     help.addEventListener("mouseenter", function () { tip.style.display = "block"; });
     help.addEventListener("mouseleave", function () { tip.style.display = "none"; });
@@ -809,7 +837,7 @@ _PANEL_JS = """
     searchDropdown.innerHTML = matches.map(function (m, i) {
       return '<div class="gr-search-item" data-idx="' + i + '">' +
              '<span class="gr-si-name">' + esc(m.id) + '</span>' +
-             '<span class="gr-si-type">' + (metaOf(m.id).t || "") + '</span></div>';
+             '<span class="gr-si-type">' + esc(metaOf(m.id).t || "") + '</span></div>';
     }).join("");
     searchDropdown.style.display = "block";
     searchDropdown.querySelectorAll(".gr-search-item").forEach(function (el) {
@@ -930,6 +958,10 @@ _PANEL_JS = """
     chatHeader.addEventListener("click", function () { chatEl.classList.toggle("collapsed"); });
   }
 
+  // KEAMANAN: jawaban LLM berasal dari dokumen tak tepercaya. Urutan di bawah TIDAK BOLEH diubah:
+  // escape SEMUA HTML dulu, baru tambahkan tag whitelist (tanpa link/gambar/atribut). Tag yang
+  // dihasilkan hanya membungkus teks yang sudah ter-escape, jadi tidak ada jalan menuju XSS.
+  // Jangan tambahkan fitur (link, gambar, HTML mentah) di sini tanpa sanitizer dan tes di tests/test_frontend.py.
   function renderMarkdown(raw) {
     var html = String(raw).replace(/[&<>"']/g, function(m) {
       return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m];
@@ -1154,8 +1186,9 @@ class GraphVisualizer:
             "TOTAL_NODES": self.graph.number_of_nodes(),
             "TOTAL_EDGES": self.graph.number_of_edges(),
         }
-        # Escape "</" so a node name containing "</script>" can't break out of the tag.
-        data_json = json.dumps(gr_data, ensure_ascii=False).replace("</", "<\\/")
+        # Node names/descriptions are LLM output derived from untrusted PDFs: escape <, >, & (also
+        # covers "</script>" and "<!--<script>") so they can't break out of the <script> block.
+        data_json = _json_for_script(gr_data)
         return (
             "<style>" + _PANEL_CSS + "</style>\n"
             + _PANEL_HTML + "\n"
@@ -1255,6 +1288,12 @@ class GraphVisualizer:
         # pyvis's write_html() writes with the OS default encoding (cp1252 on Windows) and
         # crashes on non-latin-1 characters, so we render the string and write UTF-8 ourselves.
         html = net.generate_html(notebook=False)
+
+        # Drop the unused Bootstrap CDN tags → the page has no external runtime dependency.
+        html = _BOOTSTRAP_TAG_RE.sub("", html)
+        if _EXTERNAL_REF_RE.search(html):
+            print("[Viz] Warning: the page still references an external resource; the strict CSP "
+                  "served by server.py will block it. Check the pyvis template.")
 
         # Inject the custom right-panel UI just before </body>.
         injection = self._ui_injection(type_counts, node_meta)

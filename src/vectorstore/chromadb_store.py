@@ -6,8 +6,12 @@ from typing import List, Dict
 class ChromaStore:
     def __init__(self, persist_directory: str = "data/processed/chroma_db"):
         os.makedirs(persist_directory, exist_ok=True)
-        # Initialize local persistent Chroma client
-        self.client = chromadb.PersistentClient(path=persist_directory)
+        # Initialize local persistent Chroma client. Anonymous telemetry is ON by default in chromadb;
+        # this is a local, privacy-sensitive tool, so it is turned off (does not touch stored data).
+        self.client = chromadb.PersistentClient(
+            path=persist_directory,
+            settings=Settings(anonymized_telemetry=False),
+        )
         
         # Two collections as per spec
         self.chunks_collection = self.client.get_or_create_collection(name="chunks")

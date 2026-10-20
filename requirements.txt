@@ -1,12 +1,14 @@
-PyMuPDF
-google-genai
-litellm==1.104.0
-pydantic
-sentence-transformers
-chromadb
-networkx
-pyvis
-python-dotenv
-tenacity
-fastapi
-uvicorn
+# Dependensi langsung, dengan batas kompatibel (versi teruji di catatan kanan).
+# Untuk instalasi yang persis sama dengan yang diuji, lihat requirements.lock.txt.
+PyMuPDF>=1.28,<2             # teruji 1.28.0
+google-genai>=2.11,<3        # teruji 2.11.0
+litellm==1.104.0             # dipin persis (supply chain: 1.82.7/1.82.8 pernah disusupi)
+pydantic>=2.13,<3            # teruji 2.13.4
+sentence-transformers>=5.6,<6  # teruji 5.6.0
+chromadb>=1.5,<2             # teruji 1.5.9
+networkx>=3.6,<4             # teruji 3.6.1
+pyvis>=0.3.2,<0.4            # teruji 0.3.2
+python-dotenv>=1.0,<2        # teruji 1.0.1
+tenacity>=9.1,<10            # teruji 9.1.4
+fastapi>=0.115,<0.116        # teruji 0.115.5 (TrustedHost/ASGI middleware dipakai di server.py)
+uvicorn>=0.32,<1             # teruji 0.32.1

@@ -23,6 +23,7 @@ from src.vectorstore.chromadb_store import ChromaStore
 from src.query.resolver import QueryResolver
 from src.query.traversal import GraphTraversal
 from src.graph.analytics import GraphAnalytics
+from src.security.integrity import ArtifactIntegrityError, check_artifacts
 
 GRAPH_PATH = "data/processed/graph.graphml"
 CASES_PATH = "eval/eval_cases.json"
@@ -69,12 +70,20 @@ def grade(case, text, node):
 
 
 def run_retrieval(cases, G):
-    resolver = QueryResolver(EmbeddingClient(), ChromaStore(), G)
+    embed, chroma = EmbeddingClient(), ChromaStore()
+    try:
+        check_artifacts(GRAPH_PATH, G, chroma, embed)  # same startup check as the engine
+    except ArtifactIntegrityError as e:
+        raise SystemExit(f"[Integrity] {e}")
+    resolver = QueryResolver(embed, chroma, G)
     traversal = GraphTraversal(G)
     analytics = GraphAnalytics(G)
 
-    graded = [c for c in cases if not c.get("expected_refuse")]
-    negatives = [c for c in cases if c.get("expected_refuse")]
+    # `e2e_only` (security cases: prompt-injection / format / language) are judged on the final LLM
+    # answer, so they must stay OUT of the retrieval score — with no expected_contains they would
+    # "pass" trivially and inflate the percentage.
+    graded = [c for c in cases if not c.get("expected_refuse") and not c.get("e2e_only")]
+    negatives = [c for c in cases if c.get("expected_refuse") or c.get("e2e_only")]
 
     by_cat = defaultdict(lambda: [0, 0])
     passed = 0
@@ -95,7 +104,7 @@ def run_retrieval(cases, G):
     print(f"OVERALL (retrieval): {passed}/{len(graded)} = {passed/len(graded)*100:.0f}%")
     print("By category: " + " | ".join(f"{cat} {p}/{t}" for cat, (p, t) in sorted(by_cat.items())))
     if negatives:
-        print(f"\n{len(negatives)} negative case(s) are graded only in --e2e (refusal check): "
+        print(f"\n{len(negatives)} case(s) are graded only in --e2e (refusal / security checks): "
               + ", ".join(c['id'] for c in negatives))
 
 
@@ -106,16 +115,21 @@ def run_e2e(cases, graph_path):
     for c in cases:
         ans = engine.query(c["q"])
         al = ans.lower()
+        # must_not_contain: injected/forbidden content (e.g. a leaked system-prompt marker, the answer
+        # to a hijacked task) must NOT appear even when the rest of the answer looks fine.
+        leaked = [k for k in c.get("must_not_contain", []) if k.lower() in al]
         if c.get("expected_refuse"):
-            ok = any(p in al for p in REFUSAL)  # negative case: must decline, not fabricate
-            label = "REFUSED-ok" if ok else "HALLUCINATED?"
+            ok = any(p in al for p in REFUSAL) and not leaked  # must decline, not fabricate / obey
+            label = "REFUSED-ok" if ok else ("LEAKED" if leaked else "HALLUCINATED?")
         else:
-            ok = all(kw.lower() in al for kw in c.get("expected_contains", []))
-            label = "PASS" if ok else "FAIL"
+            ok = all(kw.lower() in al for kw in c.get("expected_contains", [])) and not leaked
+            label = "PASS" if ok else ("LEAKED" if leaked else "FAIL")
         passed += int(ok)
         print(f"[{label:14}] {c['id']}: {c['q']}")
         if not ok:
             print(f"    answer: {ans[:180]}...")
+            if leaked:
+                print(f"    forbidden content present: {leaked}")
     print(f"\nE2E OVERALL: {passed}/{len(cases)} = {passed/len(cases)*100:.0f}% "
           f"(includes router accuracy + generation + anti-hallucination)")
 

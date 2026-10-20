@@ -1,5 +1,7 @@
-# Environments
+# Environments (secrets: never commit; .env.example is the only tracked template)
 .env
+.env.*
+!.env.example
 .venv/
 venv/
 env/
@@ -34,6 +36,21 @@ data/processed/*
 
 # Corpus backups (hasil build yang disimpan supaya tidak perlu rebuild)
 backups/
+
+# Local tooling / logs / test caches (berisi path lokal atau teks pertanyaan pengguna)
+.claude/settings.local.json
+logs/
+.pytest_cache/
+
+# Dokumen internal (rencana/spesifikasi, keamanan, laporan magang) — hanya lokal
+LITELLM_INTEGRATION_PLAN.md
+GraphRAG_Paper_Explorer_Spec.md
+TECHNICAL_REFERENCE.md
+project_context.md
+SECURITY.md
+security-playbook.md
+LAPORAN_*.md
+ROADMAP.md
 
 # IDEs & OS Files
 .vscode/

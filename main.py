@@ -12,6 +12,9 @@ from src.graph.analytics import GraphAnalytics
 from src.vectorstore.chromadb_store import ChromaStore
 from src.engine import GraphRAGEngine
 from src.config import ExtractedKnowledge, load_paper_metadata, save_paper_metadata
+from src.security.integrity import (
+    ArtifactIntegrityError, atomic_write_json, build_manifest, write_manifest,
+)
 
 # ──────────────────────────────────────────
 # Checkpoint helpers
@@ -24,21 +27,27 @@ def _save_checkpoint(done_chunk_ids: set, knowledge_items: list):
     The chunk_id is persisted per item so provenance survives a resume (Phase A) —
     Pydantic private attrs are dropped by model_dump(), so we track it at the item level.
     """
-    os.makedirs("data/processed", exist_ok=True)
     payload = {
         "done_chunk_ids": list(done_chunk_ids),
         "knowledge": [{"chunk_id": cid, "data": k.model_dump()} for cid, k in knowledge_items],
     }
-    with open(CHECKPOINT_PATH, "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, indent=2)
+    # Atomic (temp file + os.replace): this file holds costly LLM output; a crash mid-write must
+    # never leave truncated JSON that makes the build impossible to resume.
+    atomic_write_json(CHECKPOINT_PATH, payload, indent=2)
 
 def _load_checkpoint():
     """Load checkpoint if present. Returns (done_chunk_ids, knowledge_items) where each
     item is (chunk_id, ExtractedKnowledge). Tolerant of the old format (no chunk_id)."""
     if not os.path.exists(CHECKPOINT_PATH):
         return set(), []
-    with open(CHECKPOINT_PATH, "r", encoding="utf-8") as f:
-        payload = json.load(f)
+    try:
+        with open(CHECKPOINT_PATH, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+    except ValueError as e:  # corrupt JSON: do NOT silently restart and burn the quota again
+        raise ArtifactIntegrityError(
+            f"{CHECKPOINT_PATH} is corrupt ({e}). Fix it by hand, or move it aside "
+            f"(e.g. rename to .corrupt) to re-extract from scratch."
+        ) from e
     items = []
     for entry in payload["knowledge"]:
         if isinstance(entry, dict) and "data" in entry:  # v2 format
@@ -108,7 +117,11 @@ def build_pipeline():
 
     # ── Checkpoint: load progress ──
     # knowledge_items: list of (chunk_id, ExtractedKnowledge) — chunk_id carries provenance.
-    done_chunk_ids, knowledge_items = _load_checkpoint()
+    try:
+        done_chunk_ids, knowledge_items = _load_checkpoint()
+    except ArtifactIntegrityError as e:
+        print(f"\n[ERROR] {e}")
+        return
     if done_chunk_ids:
         print(f"[Checkpoint] Resuming. {len(done_chunk_ids)}/{len(chunks)} chunks already done.")
 
@@ -166,11 +179,11 @@ def build_pipeline():
 
     print("Deduplicating entities...")
     dedup.process_extracted_knowledge(knowledge_list, resume_from_idx=dedup_resume_idx)
-    
+
     # Clean up dedup checkpoint after success
     if os.path.exists(DEDUP_CHECKPOINT_PATH):
         os.remove(DEDUP_CHECKPOINT_PATH)
-    
+
     # 5. Graph Construction (with provenance: anchors every entity to its source Paper)
     graph_builder = GraphBuilder()
     graph_builder.add_knowledge_with_provenance(knowledge_items)
@@ -198,7 +211,7 @@ def build_pipeline():
                 })
             except Exception as e:
                 print(f"[Warning] Skipped community {c['community_id']} summarization: {e}")
-            
+
     # 7. Vector DB Storage
     chroma = ChromaStore()
     
@@ -212,7 +225,15 @@ def build_pipeline():
         summary_texts = [s["summary"] for s in summaries]
         summary_embs = embed.embed_batch(summary_texts)
         chroma.add_community_summaries(summaries, summary_embs)
-        
+
+    # 7.5 Integrity manifest (embedding model + revision, graph SHA-256/counts, Chroma counts).
+    #     The engine verifies it at startup. A failure here must not discard a completed build.
+    try:
+        write_manifest(build_manifest("data/processed/graph.graphml", graph_builder.graph, chroma))
+        print("[Integrity] Wrote data/processed/manifest.json")
+    except Exception as e:
+        print(f"[Integrity] Could not write the manifest: {e}. Create it later with: python corpus.py manifest")
+
     # Clean up extraction checkpoint after successful completion
     if os.path.exists(CHECKPOINT_PATH):
         os.remove(CHECKPOINT_PATH)
@@ -233,7 +254,11 @@ def query_pipeline(query: str):
         print("Graph not found. Please run 'build' first.")
         return
         
-    engine = GraphRAGEngine("data/processed/graph.graphml")
+    try:
+        engine = GraphRAGEngine("data/processed/graph.graphml")
+    except ArtifactIntegrityError as e:
+        print(f"\n[ERROR] {e}")
+        return
     answer = engine.query(query)
     
     print("\n" + "="*40)

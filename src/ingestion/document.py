@@ -2,7 +2,7 @@ import os
 import fitz  # PyMuPDF
 from typing import List, Dict
 
-from src.config import SECTION_FILTER_PATTERN, SECTION_FILTER_MIN_POSITION
+from src.config import SECTION_FILTER_PATTERN, SECTION_FILTER_MIN_POSITION, MAX_PDF_PAGES, MAX_PDF_BYTES
 
 # PDF text often contains Unicode ligature glyphs (ﬁ, ﬂ, …) that pollute entity names
 # (e.g. "classiﬁcation"). Map them back to plain ASCII. General — any corpus, any domain.
@@ -58,9 +58,20 @@ class DocumentProcessor:
 
         doc_id = os.path.basename(file_path)
         chunks = []
-        
+
+        # Resource limits (PDF = untrusted input). A skipped PDF never aborts the whole build. Note: a
+        # hung native parser cannot be killed from Python, so there is deliberately no timeout here.
+        size = os.path.getsize(file_path)
+        if size > MAX_PDF_BYTES:
+            print(f"  [Skip] {doc_id}: {size / 1e6:.0f} MB exceeds the {MAX_PDF_BYTES / 1e6:.0f} MB limit.")
+            return []
+
         try:
             doc = fitz.open(file_path)
+            if len(doc) > MAX_PDF_PAGES:
+                print(f"  [Skip] {doc_id}: {len(doc)} pages exceeds the {MAX_PDF_PAGES}-page limit.")
+                doc.close()
+                return []
             full_text = ""
             for page_num in range(len(doc)):
                 page = doc.load_page(page_num)

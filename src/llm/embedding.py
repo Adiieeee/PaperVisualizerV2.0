@@ -2,13 +2,13 @@ from sentence_transformers import SentenceTransformer
 from typing import List
 import numpy as np
 
-from src.config import EMBEDDING_MODEL_NAME
+from src.config import EMBEDDING_MODEL_NAME, EMBEDDING_MODEL_REVISION
 
 class EmbeddingClient:
     def __init__(self):
-        # Load the local bge-small-en-v1.5 model on CPU
+        # Load the local bge-small-en-v1.5 model on CPU, pinned to an exact hub revision
         print(f"Loading local embedding model: {EMBEDDING_MODEL_NAME}...")
-        self.model = SentenceTransformer(EMBEDDING_MODEL_NAME, device='cpu')
+        self.model = SentenceTransformer(EMBEDDING_MODEL_NAME, device='cpu', revision=EMBEDDING_MODEL_REVISION)
 
     def embed_text(self, text: str) -> List[float]:
         """

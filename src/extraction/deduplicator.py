@@ -6,6 +6,7 @@ from typing import List, Dict, Optional
 from src.llm.gemini_client import GeminiClient
 from src.llm.embedding import EmbeddingClient
 from src.config import DEDUP_SIMILARITY_THRESHOLD, Entity
+from src.security.integrity import atomic_write_json
 
 _PUNCT_RE = re.compile(r"[^\w\s]")
 _WS_RE = re.compile(r"\s+")
@@ -132,13 +133,11 @@ class SimilarityDebugLogger:
 # Checkpoint helpers
 # ──────────────────────────────────────────
 def _save_dedup_checkpoint(master_list_serializable: dict, name_mapping_global: dict):
-    """Save dedup progress to disk."""
-    os.makedirs("data/processed", exist_ok=True)
-    with open(DEDUP_CHECKPOINT_PATH, "w", encoding="utf-8") as f:
-        json.dump({
-            "master_list": master_list_serializable,
-            "name_mapping": name_mapping_global
-        }, f, ensure_ascii=False)
+    """Save dedup progress to disk (atomic: a crash mid-write must not corrupt the resume state)."""
+    atomic_write_json(DEDUP_CHECKPOINT_PATH, {
+        "master_list": master_list_serializable,
+        "name_mapping": name_mapping_global
+    })
 
 
 def _load_dedup_checkpoint():

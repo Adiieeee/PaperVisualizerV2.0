@@ -3,6 +3,7 @@ import networkx as nx
 from collections import Counter
 from typing import List, Tuple
 from src.config import ExtractedKnowledge
+from src.security.integrity import atomic_write
 
 class GraphBuilder:
     def __init__(self):
@@ -354,9 +355,10 @@ class GraphBuilder:
 
     def save_graph(self, filepath: str):
         """
-        Saves the graph to GraphML format.
+        Saves the graph to GraphML format (atomic: temp file + os.replace, so a crash mid-write
+        can never leave a truncated graph.graphml).
         """
-        nx.write_graphml(self.graph, filepath)
+        atomic_write(filepath, lambda tmp: nx.write_graphml(self.graph, tmp))
         print(f"Graph saved to {filepath} with {self.graph.number_of_nodes()} nodes and {self.graph.number_of_edges()} edges.")
 
     def load_graph(self, filepath: str):

@@ -8,6 +8,7 @@ from src.config import (
     GENERIC_ENTITY_BLOCKLIST,
     MIN_ENTITY_NAME_LENGTH,
 )
+from src.security.sanitize import sanitize_entity_name
 
 _PUNCT_RE = re.compile(r"[^\w\s]")
 
@@ -29,6 +30,8 @@ def clean_knowledge_list(knowledge_list: List[ExtractedKnowledge]) -> List[Extra
     Removes:
       - entities whose normalized name is in GENERIC_ENTITY_BLOCKLIST
       - entities whose normalized name is shorter than MIN_ENTITY_NAME_LENGTH
+      - entities rejected by sanitize_entity_name (markup `<`/`>`, URLs, abnormal length) — LLM
+        output derived from untrusted PDFs; control characters/newlines are cleaned instead
       - relationships that reference a removed entity, or that are self-loops
 
     Note: entity/relationship *type* validity is already guaranteed upstream by the
@@ -36,15 +39,26 @@ def clean_knowledge_list(knowledge_list: List[ExtractedKnowledge]) -> List[Extra
     """
     ent_before = ent_after = 0
     rel_before = rel_after = 0
+    unsafe = 0
 
     for k in knowledge_list:
         kept_entities = []
         removed_names = set()
+        rename = {}  # original name -> sanitized name (relationships still use the original)
         for ent in k.entities:
             ent_before += 1
-            norm = _normalize(ent.name or "")
+            original = ent.name
+            safe = sanitize_entity_name(original or "")
+            if safe is None:
+                removed_names.add(original)
+                unsafe += 1
+                continue
+            if safe != original:
+                rename[original] = safe
+                ent.name = safe
+            norm = _normalize(ent.name)
             if len(norm) < MIN_ENTITY_NAME_LENGTH or norm in GENERIC_ENTITY_BLOCKLIST:
-                removed_names.add(ent.name)
+                removed_names.add(original)
                 continue
             kept_entities.append(ent)
         k.entities = kept_entities
@@ -55,6 +69,8 @@ def clean_knowledge_list(knowledge_list: List[ExtractedKnowledge]) -> List[Extra
             rel_before += 1
             if rel.source_entity in removed_names or rel.target_entity in removed_names:
                 continue
+            rel.source_entity = rename.get(rel.source_entity, rel.source_entity)
+            rel.target_entity = rename.get(rel.target_entity, rel.target_entity)
             if rel.source_entity == rel.target_entity:  # self-loop
                 continue
             kept_rels.append(rel)
@@ -64,6 +80,7 @@ def clean_knowledge_list(knowledge_list: List[ExtractedKnowledge]) -> List[Extra
     print(
         f"[Cleaner] Entities: {ent_before} -> {ent_after} (-{ent_before - ent_after}). "
         f"Relationships: {rel_before} -> {rel_after} (-{rel_before - rel_after})."
+        + (f" Rejected {unsafe} unsafe entity name(s)." if unsafe else "")
     )
     return knowledge_list
 
