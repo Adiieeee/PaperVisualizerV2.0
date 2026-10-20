@@ -38,7 +38,7 @@ _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 def _valid_name(name: str) -> bool:
     return bool(_NAME_RE.match(name)) and ".." not in name
-OPTIONAL = ["graph_visualization.html"]
+OPTIONAL = ["graph_visualization.html", "extraction_models.json"]  # + audit model per chunk
 # Sengaja TIDAK di-backup: similarity_debug*.csv (log diagnostik, besar, tidak dipakai runtime)
 
 
@@ -153,7 +153,7 @@ def _wipe_current(verbose=True):
     for f in RAW.glob("*.pdf"):
         f.unlink(); removed.append(str(f))
     for pattern in ("graph.graphml", "paper_metadata.json", "graph_visualization.html",
-                    "similarity_debug*.csv", "checkpoint_*.json"):
+                    "similarity_debug*.csv", "checkpoint_*.json", "extraction_models.json"):
         for f in PROCESSED.glob(pattern):
             f.unlink(); removed.append(str(f))
     chroma = PROCESSED / "chroma_db"

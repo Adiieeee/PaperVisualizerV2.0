@@ -3,7 +3,7 @@ import os
 import json
 
 from src.ingestion.document import DocumentProcessor
-from src.llm.gemini_client import GeminiClient
+from src.llm.gemini_client import GeminiClient, DailyQuotaExceededError
 from src.llm.embedding import EmbeddingClient
 from src.extraction.cleaner import clean_knowledge_list, preprocess_authors
 from src.extraction.deduplicator import HybridDeduplicator, extract_acronyms_from_texts, register_acronyms
@@ -20,16 +20,21 @@ from src.security.integrity import (
 # Checkpoint helpers
 # ──────────────────────────────────────────
 CHECKPOINT_PATH = "data/processed/checkpoint_extraction.json"
+# Model yang mengekstrak tiap chunk (Gemini, atau Groq saat kuota harian Gemini habis). Checkpoint
+# dihapus setelah build sukses, jadi mapping ini juga ditulis permanen untuk audit/proses ulang.
+EXTRACTION_MODELS_PATH = "data/processed/extraction_models.json"
 
-def _save_checkpoint(done_chunk_ids: set, knowledge_items: list):
+def _save_checkpoint(done_chunk_ids: set, knowledge_items: list, chunk_models: dict = None):
     """
     Save progress to disk. knowledge_items is a list of (chunk_id, ExtractedKnowledge).
     The chunk_id is persisted per item so provenance survives a resume (Phase A) —
     Pydantic private attrs are dropped by model_dump(), so we track it at the item level.
+    chunk_models: {chunk_id: model yang menjawab}; dibaca lagi lewat _load_chunk_models().
     """
     payload = {
         "done_chunk_ids": list(done_chunk_ids),
         "knowledge": [{"chunk_id": cid, "data": k.model_dump()} for cid, k in knowledge_items],
+        "models": chunk_models or {},
     }
     # Atomic (temp file + os.replace): this file holds costly LLM output; a crash mid-write must
     # never leave truncated JSON that makes the build impossible to resume.
@@ -55,6 +60,14 @@ def _load_checkpoint():
         else:  # legacy format: a bare knowledge dict, no chunk_id
             items.append((None, ExtractedKnowledge.model_validate(entry)))
     return set(payload["done_chunk_ids"]), items
+
+def _load_chunk_models() -> dict:
+    """{chunk_id: model} dari checkpoint (kosong untuk checkpoint lama yang belum mencatatnya).
+    Dipanggil setelah _load_checkpoint, yang sudah menolak JSON korup."""
+    if not os.path.exists(CHECKPOINT_PATH):
+        return {}
+    with open(CHECKPOINT_PATH, "r", encoding="utf-8") as f:
+        return json.load(f).get("models", {})
 
 
 # ──────────────────────────────────────────
@@ -122,6 +135,7 @@ def build_pipeline():
     except ArtifactIntegrityError as e:
         print(f"\n[ERROR] {e}")
         return
+    chunk_models = _load_chunk_models()
     if done_chunk_ids:
         print(f"[Checkpoint] Resuming. {len(done_chunk_ids)}/{len(chunks)} chunks already done.")
 
@@ -138,14 +152,20 @@ def build_pipeline():
             knowledge = llm.extract_entities(chunk["text"], paper_title=paper_title)
             knowledge_items.append((chunk["chunk_id"], knowledge))
             done_chunk_ids.add(chunk["chunk_id"])
+            chunk_models[chunk["chunk_id"]] = llm.last_model
             # Save checkpoint after EVERY successful extraction
-            _save_checkpoint(done_chunk_ids, knowledge_items)
+            _save_checkpoint(done_chunk_ids, knowledge_items, chunk_models)
         except Exception as e:
             print(f"\n[ERROR] Failed on chunk {chunk['chunk_id']}: {e}")
             print("[Checkpoint] Progress saved. Re-run 'python main.py build' to resume.\n")
             return
 
     print("All chunks extracted successfully.")
+    atomic_write_json(EXTRACTION_MODELS_PATH, chunk_models, indent=2)
+    model_counts = {}
+    for m in chunk_models.values():
+        model_counts[m] = model_counts.get(m, 0) + 1
+    print(f"[LLM] Chunks per model: {model_counts}  (detail: {EXTRACTION_MODELS_PATH})")
 
     # 3.5 Post-extraction validation + author normalization (graph-only; does NOT touch
     #     the vector store). These mutate the ExtractedKnowledge objects in place, so the
@@ -155,7 +175,9 @@ def build_pipeline():
     knowledge_list = preprocess_authors(knowledge_list)
 
     # 4. Dedup (with checkpoint support)
-    from src.extraction.deduplicator import _load_dedup_checkpoint, DEDUP_CHECKPOINT_PATH
+    from src.extraction.deduplicator import (
+        _load_dedup_checkpoint, _load_dedup_decision_models, DEDUP_CHECKPOINT_PATH,
+    )
     dedup = HybridDeduplicator(llm, embed)
     
     # Try to resume dedup from checkpoint
@@ -170,6 +192,7 @@ def build_pipeline():
             for name, data in entities.items():
                 dedup.master_list[ent_type][name] = {"embedding": data["embedding"]}
         dedup.name_mapping_global = saved_name_mapping
+        dedup.decision_models = _load_dedup_decision_models()
         # Count how many knowledge items were fully processed
         dedup_resume_idx = sum(
             1 for k in knowledge_list
@@ -178,7 +201,14 @@ def build_pipeline():
         print(f"[Checkpoint] Dedup resuming from knowledge item ~{dedup_resume_idx}/{len(knowledge_list)}")
 
     print("Deduplicating entities...")
-    dedup.process_extracted_knowledge(knowledge_list, resume_from_idx=dedup_resume_idx)
+    try:
+        dedup.process_extracted_knowledge(knowledge_list, resume_from_idx=dedup_resume_idx)
+    except DailyQuotaExceededError as e:
+        # Dedup sengaja tanpa fallback (keputusan merge harus dari satu model). Checkpoint sudah
+        # disimpan oleh deduplicator; re-run setelah kuota reset melanjutkan dari sana.
+        print(f"\n[Dedup] Stopped: {e}")
+        print(f"[Checkpoint] Dedup progress saved to {DEDUP_CHECKPOINT_PATH}.")
+        return
 
     # Clean up dedup checkpoint after success
     if os.path.exists(DEDUP_CHECKPOINT_PATH):

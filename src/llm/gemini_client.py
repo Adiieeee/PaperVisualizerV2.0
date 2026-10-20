@@ -1,16 +1,10 @@
-from google import genai
-from google.genai import types
-from google.genai import errors as genai_errors
 from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception
 import json
 import time
 
-# ──────────────────────────────────────────
-# Custom exception for daily quota exhaustion
-# ──────────────────────────────────────────
-class DailyQuotaExceededError(Exception):
-    """Raised when the daily API quota is exhausted. Retrying is pointless."""
-    pass
+# DailyQuotaExceededError kini didefinisikan di llm_client (satu kelas untuk semua jalur);
+# tetap di-import di sini karena server.py dan tes mengambilnya dari modul ini.
+from src.llm.llm_client import DailyQuotaExceededError, call_llm
 
 class EmptyResponseError(Exception):
     """Gemini returned no text (e.g. blocked by a safety filter). Deterministic — retrying is pointless."""
@@ -24,20 +18,6 @@ def _is_retryable(exc: BaseException) -> bool:
     if isinstance(exc, (DailyQuotaExceededError, EmptyResponseError)):
         return False
     return True
-
-def _raise_if_daily_limit(exc: Exception):
-    """
-    Inspects a 429 error. If it's a daily quota violation, re-raises as
-    DailyQuotaExceededError so tenacity won't bother retrying.
-    """
-    msg = str(exc)
-    if "GenerateRequestsPerDayPerProjectPerModel" in msg:
-        raise DailyQuotaExceededError(
-            "\n\n[DAILY QUOTA EXHAUSTED]\n"
-            "Your free-tier daily request limit for this model has been reached.\n"
-            "Quota resets at midnight (Pacific Time) / ~15:00 WIB.\n"
-            "Progress has been saved. Run 'python main.py build' again tomorrow.\n"
-        ) from exc
 
 def print_retry(retry_state):
     exc = retry_state.outcome.exception()
@@ -54,12 +34,27 @@ from src.security.sanitize import neutralize_tags
 from typing import Iterable
 
 class GeminiClient:
-    def __init__(self, model_name: str = "gemini-flash-lite-latest"):
-        self.model_name = model_name
+    """Fasad semua panggilan LLM pipeline, semuanya lewat LiteLLM (call_llm, src/llm/llm_client.py).
+    Alias "general": Gemini, pindah ke Groq hanya saat kuota harian Gemini habis. Alias "dedup"
+    (resolve_dedup, resolve_family_merge): Gemini saja — keputusan merge harus dari satu model.
+    Model diatur lewat env GEMINI_MODEL / GROQ_MODEL. `last_model` = model yang benar-benar
+    menjawab panggilan terakhir (untuk audit hasil fallback)."""
+
+    def __init__(self):
+        self.last_model = None
         if not GEMINI_API_KEY:
             print("WARNING: GEMINI_API_KEY not found in environment variables.")
 
-        self.client = genai.Client(api_key=GEMINI_API_KEY)
+    def _generate(self, prompt: str, alias: str, schema=None, **kwargs):
+        """Satu panggilan lewat call_llm + jeda rate limit. ValueError = output tidak lolos skema."""
+        try:
+            result, self.last_model = call_llm(
+                [{"role": "user", "content": prompt}], alias=alias, schema=schema, **kwargs
+            )
+            return result
+        finally:
+            # Respect rate limits: ~10 requests/minute = 6 seconds/request
+            time.sleep(6.0)
 
     @retry(
         wait=wait_exponential(multiplier=2, min=10, max=90),
@@ -115,25 +110,8 @@ class GeminiClient:
         """
         
         try:
-            response = self.client.models.generate_content(
-                model=self.model_name,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    response_schema=ExtractedKnowledge,
-                    temperature=0.1
-                )
-            )
-        except Exception as e:
-            _raise_if_daily_limit(e)
-            raise
-
-        # Respect rate limits: ~10 requests/minute = 6 seconds/request
-        time.sleep(6.0)
-
-        try:
-            return ExtractedKnowledge.model_validate_json(response.text)
-        except Exception as e:
+            return self._generate(prompt, "general", ExtractedKnowledge, temperature=0.1)
+        except ValueError as e:
             print(f"Failed to parse LLM output: {e}")
             return ExtractedKnowledge(entities=[], relationships=[])
 
@@ -163,23 +141,8 @@ class GeminiClient:
         {first_page_text}
         """
         try:
-            response = self.client.models.generate_content(
-                model=self.model_name,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    response_schema=PaperMeta,
-                    temperature=0.0,
-                ),
-            )
-        except Exception as e:
-            _raise_if_daily_limit(e)
-            raise
-
-        time.sleep(6.0)
-        try:
-            return PaperMeta.model_validate_json(response.text)
-        except Exception:
+            return self._generate(prompt, "general", PaperMeta, temperature=0.0)
+        except ValueError:
             return PaperMeta(title="", models=[])
 
     @retry(
@@ -212,23 +175,8 @@ class GeminiClient:
         - canonical: pilih nama yang paling umum dipakai komunitas sebagai induk keluarga.
         """
         try:
-            response = self.client.models.generate_content(
-                model=self.model_name,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    response_schema=FamilyDecision,
-                    temperature=0.0,
-                ),
-            )
-        except Exception as e:
-            _raise_if_daily_limit(e)
-            raise
-
-        time.sleep(6.0)
-        try:
-            return FamilyDecision.model_validate_json(response.text)
-        except Exception:
+            return self._generate(prompt, "dedup", FamilyDecision, temperature=0.0)
+        except ValueError:
             return FamilyDecision(same_family=False, canonical=name_a, reason="parse error")
 
     @retry(
@@ -265,24 +213,8 @@ class GeminiClient:
         """
         
         try:
-            response = self.client.models.generate_content(
-                model=self.model_name,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    response_schema=DedupDecision,
-                    temperature=0.0
-                )
-            )
-        except Exception as e:
-            _raise_if_daily_limit(e)
-            raise
-
-        time.sleep(6.0)
-
-        try:
-            return DedupDecision.model_validate_json(response.text)
-        except Exception as e:
+            return self._generate(prompt, "dedup", DedupDecision, temperature=0.0)
+        except ValueError:
             return DedupDecision(is_duplicate=False, reason="parse error", merged_name=candidate_name)
 
 
@@ -304,18 +236,7 @@ class GeminiClient:
         {neutralize_tags(community_text)}
         </daftar_entitas>
         """
-        try:
-            response = self.client.models.generate_content(
-                model=self.model_name,
-                contents=prompt,
-                config=types.GenerateContentConfig(temperature=0.3)
-            )
-        except Exception as e:
-            _raise_if_daily_limit(e)
-            raise
-
-        time.sleep(6.0)
-        return response.text
+        return self._generate(prompt, "general", temperature=0.3)
 
 
     @retry(
@@ -352,23 +273,8 @@ class GeminiClient:
         </pertanyaan_user>
         """
         try:
-            response = self.client.models.generate_content(
-                model=self.model_name,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    response_schema=QueryRouting,
-                    temperature=0.0
-                )
-            )
-        except Exception as e:
-            _raise_if_daily_limit(e)
-            raise
-
-        time.sleep(6.0)
-        try:
-            return QueryRouting.model_validate_json(response.text)
-        except Exception as e:
+            return self._generate(prompt, "general", QueryRouting, temperature=0.0)
+        except ValueError:
             return QueryRouting(intent="entity", search_query=query)
 
 
@@ -385,21 +291,7 @@ class GeminiClient:
         prompt: everything untrusted is neutralized and tagged as DATA by build_answer_prompt().
         """
         prompt = build_answer_prompt(query, blocks)
-        try:
-            response = self.client.models.generate_content(
-                model=self.model_name,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    temperature=0.0,
-                    max_output_tokens=ANSWER_MAX_OUTPUT_TOKENS,
-                )
-            )
-        except Exception as e:
-            _raise_if_daily_limit(e)
-            raise
-
-        time.sleep(6.0)
-        text = getattr(response, "text", None)
+        text = self._generate(prompt, "general", temperature=0.0, max_tokens=ANSWER_MAX_OUTPUT_TOKENS)
         if not text or not text.strip():  # blocked by a safety filter / empty candidate
             raise EmptyResponseError("Gemini returned no text for the answer.")
         return text

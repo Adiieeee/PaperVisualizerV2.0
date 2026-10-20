@@ -4,6 +4,7 @@ import csv
 import re
 from typing import List, Dict, Optional
 from src.llm.gemini_client import GeminiClient
+from src.llm.llm_client import LLMQuotaError
 from src.llm.embedding import EmbeddingClient
 from src.config import DEDUP_SIMILARITY_THRESHOLD, Entity
 from src.security.integrity import atomic_write_json
@@ -132,11 +133,14 @@ class SimilarityDebugLogger:
 # ──────────────────────────────────────────
 # Checkpoint helpers
 # ──────────────────────────────────────────
-def _save_dedup_checkpoint(master_list_serializable: dict, name_mapping_global: dict):
-    """Save dedup progress to disk (atomic: a crash mid-write must not corrupt the resume state)."""
+def _save_dedup_checkpoint(master_list_serializable: dict, name_mapping_global: dict,
+                           decision_models: Optional[dict] = None):
+    """Save dedup progress to disk (atomic: a crash mid-write must not corrupt the resume state).
+    decision_models: {kandidat: model yang memutuskan merge-nya} — audit; tidak dipakai saat resume."""
     atomic_write_json(DEDUP_CHECKPOINT_PATH, {
         "master_list": master_list_serializable,
-        "name_mapping": name_mapping_global
+        "name_mapping": name_mapping_global,
+        "decision_models": decision_models or {},
     })
 
 
@@ -147,6 +151,14 @@ def _load_dedup_checkpoint():
     with open(DEDUP_CHECKPOINT_PATH, "r", encoding="utf-8") as f:
         data = json.load(f)
     return data.get("master_list", {}), data.get("name_mapping", {})
+
+
+def _load_dedup_decision_models() -> dict:
+    """{kandidat: model} dari checkpoint dedup (kosong untuk checkpoint lama)."""
+    if not os.path.exists(DEDUP_CHECKPOINT_PATH):
+        return {}
+    with open(DEDUP_CHECKPOINT_PATH, "r", encoding="utf-8") as f:
+        return json.load(f).get("decision_models", {})
 
 
 # ──────────────────────────────────────────
@@ -161,6 +173,7 @@ class HybridDeduplicator:
         # Used for case-insensitive exact match BEFORE embedding computation
         self.normalized_index: Dict[str, Dict[str, str]] = {}
         self.name_mapping_global: Dict[str, str] = {}
+        self.decision_models: Dict[str, str] = {}  # kandidat -> model yang memutuskan (audit)
         self.debug_logger = SimilarityDebugLogger(SIMILARITY_DEBUG_PATH)
         print(f"[Debug] Similarity scores will be logged to: {SIMILARITY_DEBUG_PATH}")
 
@@ -226,8 +239,16 @@ class HybridDeduplicator:
         llm_result = ""
         if candidates_names:
             print(f"Dedup candidate: '{cand_name}' vs {candidates_names}")
-            decision = self.llm.resolve_dedup(cand_name, ent_type, candidates_names)
-            llm_result = f"is_duplicate={decision.is_duplicate}, merged_into={decision.merged_name}"
+            try:
+                decision = self.llm.resolve_dedup(cand_name, ent_type, candidates_names)
+            except LLMQuotaError:
+                # Alias "dedup" tidak punya fallback: simpan progres (termasuk entitas item ini
+                # yang sudah terselesaikan) lalu berhenti bersih; resume melanjutkan dari sini.
+                self._save_checkpoint()
+                raise
+            self.decision_models[cand_name] = self.llm.last_model
+            llm_result = (f"is_duplicate={decision.is_duplicate}, merged_into={decision.merged_name}, "
+                          f"model={self.llm.last_model}")
 
             # Back-fill LLM result into the last N rows of the debug log
             # (approximate — we re-open and patch the last len(candidates_names) rows)
@@ -302,10 +323,14 @@ class HybridDeduplicator:
                     rel.target_entity = self.name_mapping_global[rel.target_entity]
 
             # Save checkpoint after each knowledge item
-            _save_dedup_checkpoint(
-                self._master_list_to_serializable(),
-                self.name_mapping_global
-            )
+            self._save_checkpoint()
             print(f"  [Dedup] {idx + 1}/{len(knowledge_list)} knowledge items processed.")
 
         return knowledge_list
+
+    def _save_checkpoint(self):
+        _save_dedup_checkpoint(
+            self._master_list_to_serializable(),
+            self.name_mapping_global,
+            self.decision_models,
+        )

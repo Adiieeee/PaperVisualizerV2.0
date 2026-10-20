@@ -175,3 +175,21 @@ def test_extraction_checkpoint_roundtrip_is_atomic(tmp_path, monkeypatch):
     done, items = main._load_checkpoint()
     assert done == {"c0"} and items[0][0] == "c0" and items[0][1].entities[0].name == "ResNet"
     assert not os.path.exists(str(p) + ".tmp")
+
+
+def test_extraction_checkpoint_keeps_answering_model_per_chunk(tmp_path, monkeypatch):
+    import main
+    from src.config import ExtractedKnowledge
+    p = tmp_path / "checkpoint_extraction.json"
+    monkeypatch.setattr(main, "CHECKPOINT_PATH", str(p))
+    k = ExtractedKnowledge()
+    models = {"c0": "gemini-3.5-flash-lite", "c1": "openai/gpt-oss-120b"}
+    main._save_checkpoint({"c0", "c1"}, [("c0", k), ("c1", k)], models)
+    assert main._load_chunk_models() == models
+    assert len(main._load_checkpoint()[1]) == 2
+
+    # checkpoint lama (sebelum model dicatat) tetap bisa di-resume; mapping-nya kosong
+    p.write_text('{"done_chunk_ids": ["c0"], "knowledge": [{"chunk_id": "c0", "data": '
+                 '{"entities": [], "relationships": []}}]}', encoding="utf-8")
+    assert main._load_chunk_models() == {}
+    assert main._load_checkpoint()[0] == {"c0"}
