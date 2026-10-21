@@ -16,13 +16,18 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GROQ_MODEL = os.getenv("GROQ_MODEL") or None
 
 # --- Constants ---
-# Embedding Model (Local CPU)
+# Embedding Model (lokal; GPU bila tersedia, selain itu CPU)
 EMBEDDING_MODEL_NAME = "BAAI/bge-small-en-v1.5"
 # Revisi (commit) model yang dipin: perubahan bobot di hub tidak boleh mengubah ruang embedding diam-diam.
 # Nilai ini = snapshot yang membangun korpus saat ini. Mengubahnya (atau model di atas) berarti korpus
 # harus dibangun ulang — manifest (src/security/integrity.py) akan menolak start bila tidak cocok.
 EMBEDDING_MODEL_REVISION = "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a"
 EMBEDDING_DIMENSION = 384  # bge-small-en-v1.5
+# "auto" = cuda bila torch versi CUDA terpasang dan GPU terdeteksi, selain itu cpu. Vektor tetap fp32
+# supaya build (mis. di GPU) dan query (mis. server di CPU) berada di ruang yang sama.
+EMBEDDING_DEVICE = os.getenv("EMBEDDING_DEVICE", "auto")  # auto | cpu | cuda
+EMBEDDING_MAX_SEQ_LENGTH = 1024  # chunk 2000 karakter ~500 token; tak pernah melebihi batas model sendiri
+EMBEDDING_BATCH_SIZE = 16
 
 # --- Security limits (lihat SECURITY.md). Semua batas keras ada di kode, bukan di prompt. ---
 ANSWER_MAX_OUTPUT_TOKENS = 2048          # cap biaya/latensi jawaban akhir
