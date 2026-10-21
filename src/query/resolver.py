@@ -5,7 +5,7 @@ import re
 
 from src.llm.embedding import EmbeddingClient
 from src.vectorstore.chromadb_store import ChromaStore
-from src.config import load_model_to_paper
+from src.config import RESOLVER_SIM_THRESHOLD, load_model_to_paper
 
 # Query words that signal the user wants the PAPER (not the model node): authors, affiliation,
 # findings, etc. In that case a model name like "VGG" should resolve to its Paper node.
@@ -47,7 +47,7 @@ class QueryResolver:
         self._node_embs = None
         self.model_to_paper = load_model_to_paper()  # auto-generated paper aliases (B2)
 
-    def resolve_entity(self, query: str, sim_threshold: float = 0.72,
+    def resolve_entity(self, query: str, sim_threshold: float = RESOLVER_SIM_THRESHOLD,
                        context_query: str = None) -> Optional[str]:
         """
         Layered entity resolution → canonical graph node name (or None if truly unresolvable,

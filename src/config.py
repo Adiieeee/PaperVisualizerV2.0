@@ -40,8 +40,12 @@ ALLOWED_HOSTS = ("127.0.0.1", "localhost")  # allow-list Host tetap (anti DNS re
 MAX_PDF_PAGES = 500                      # PDF di atas ini dilewati saat ingest
 MAX_PDF_BYTES = 50 * 1024 * 1024
 
-# Dedup
+# --- Ambang yang TERIKAT model embedding: kalibrasi ulang bila EMBEDDING_MODEL_NAME diganti ---
+# (sebaran skor cosine tiap model berbeda; lihat scripts/calibrate_embedding.py)
+# Dedup: pasangan entitas >= ambang dikirim ke LLM untuk dikonfirmasi (menentukan pemakaian kuota).
 DEDUP_SIMILARITY_THRESHOLD = 0.85  # Optimized threshold after diagnostic analysis (catches genuine synonyms, reduces LLM noise)
+# Resolver lapis 4: node terdekat secara embedding dipakai bila kemiripannya >= ambang ini.
+RESOLVER_SIM_THRESHOLD = 0.72
 
 # --- Post-extraction cleaning (graph quality; does NOT affect the vector store) ---
 MIN_ENTITY_NAME_LENGTH = 2  # Entities whose normalized name is shorter than this are dropped.
