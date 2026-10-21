@@ -7,7 +7,7 @@ import time
 from src.llm.llm_client import DailyQuotaExceededError, call_llm
 
 class EmptyResponseError(Exception):
-    """Gemini returned no text (e.g. blocked by a safety filter). Deterministic — retrying is pointless."""
+    """The LLM returned no text (e.g. blocked by a safety filter). Deterministic — retrying is pointless."""
     pass
 
 def _is_retryable(exc: BaseException) -> bool:
@@ -293,5 +293,5 @@ class LLMService:
         prompt = build_answer_prompt(query, blocks)
         text = self._generate(prompt, "general", temperature=0.0, max_tokens=ANSWER_MAX_OUTPUT_TOKENS)
         if not text or not text.strip():  # blocked by a safety filter / empty candidate
-            raise EmptyResponseError("Gemini returned no text for the answer.")
+            raise EmptyResponseError("The LLM returned no text for the answer.")
         return text

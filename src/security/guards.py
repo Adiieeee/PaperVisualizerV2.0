@@ -53,7 +53,7 @@ class SlidingWindowLimiter:
 
 
 class ConcurrencyGate:
-    """Batas keras jumlah chat yang berjalan bersamaan (tiap chat = 2 panggilan Gemini berbayar-kuota)."""
+    """Batas keras jumlah chat yang berjalan bersamaan (tiap chat = 2 panggilan LLM yang memakai kuota)."""
 
     def __init__(self, max_concurrent: int):
         self.max_concurrent = max_concurrent

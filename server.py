@@ -9,8 +9,8 @@ Run:
 It loads the graph + embeddings + LLM once, then opens http://127.0.0.1:8000 in
 your browser. Requires a completed build (data/processed/graph.graphml).
 
-Note: each chat message calls Gemini, so it consumes daily free-tier quota — just
-like the CLI query. Budget stays $0 (local server, local embeddings).
+Note: each chat message makes 2 LLM calls (Gemini, or Groq once Gemini's daily quota is
+gone), so it consumes daily free-tier quota — just like the CLI query. Budget stays $0 (local server, local embeddings).
 
 Keamanan (lihat SECURITY.md): server ini untuk pemakaian LOKAL. Host allow-list tetap, guard
 request (ukuran/Content-Type/Origin/rate limit/concurrency), header keamanan + CSP berbasis hash,
@@ -49,7 +49,7 @@ _NOT_BUILT_HTML = "<h1>Graph not built. Run 'python main.py build' first.</h1>"
 MSG_INVALID = (
     f"Pertanyaan tidak valid. Pastikan tidak kosong dan maksimal {config.MAX_CHAT_QUERY_LENGTH} karakter."
 )
-MSG_QUOTA = "Kuota harian Gemini habis. Coba lagi besok (kuota reset sekitar tengah malam waktu Pasifik)."
+MSG_QUOTA = "Kuota harian LLM habis. Coba lagi besok (kuota Gemini reset sekitar tengah malam waktu Pasifik)."
 MSG_EMPTY = "Model tidak menghasilkan jawaban (kemungkinan diblokir filter keamanan). Coba ubah pertanyaan Anda."
 MSG_ERROR = "Maaf, terjadi kesalahan saat memproses pertanyaan. Silakan coba lagi."
 

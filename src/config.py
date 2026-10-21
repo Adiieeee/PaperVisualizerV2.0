@@ -30,7 +30,7 @@ MAX_CHAT_QUERY_LENGTH = 500              # panjang pertanyaan maksimum di /api/c
 MAX_CHAT_BODY_BYTES = 10_000             # ukuran body maksimum di /api/chat (juga untuk body chunked)
 CHAT_RATE_LIMIT_MAX = 8                  # per IP per jendela; 1 chat butuh >=12 dtk (2 panggilan + sleep 6)
 CHAT_RATE_LIMIT_WINDOW_SECONDS = 60
-CHAT_MAX_CONCURRENT = 2                  # chat yang boleh berjalan bersamaan (tiap chat = 2 panggilan Gemini)
+CHAT_MAX_CONCURRENT = 2                  # chat yang boleh berjalan bersamaan (tiap chat = 2 panggilan LLM)
 ALLOWED_HOSTS = ("127.0.0.1", "localhost")  # allow-list Host tetap (anti DNS rebinding)
 MAX_PDF_PAGES = 500                      # PDF di atas ini dilewati saat ingest
 MAX_PDF_BYTES = 50 * 1024 * 1024

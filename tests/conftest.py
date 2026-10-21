@@ -1,5 +1,5 @@
 """
-Konfigurasi tes. Semua tes berjalan TANPA jaringan dan TANPA kuota LLM (Gemini di-mock).
+Konfigurasi tes. Semua tes berjalan TANPA jaringan dan TANPA kuota LLM (LLM di-mock).
 Jalankan: python -m pytest tests -q
 """
 import os
