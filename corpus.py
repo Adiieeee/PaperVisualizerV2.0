@@ -187,6 +187,41 @@ def cmd_clear(args):
     _wipe_current()
 
 
+# Artefak turunan yang bergantung pada model embedding / hasil build. PDF dan paper_metadata.json
+# (keluaran LLM, tidak bergantung pada embedding) sengaja TIDAK termasuk.
+INDEX_ARTIFACTS = ("graph.graphml", "manifest.json", "graph_visualization.html",
+                   "similarity_debug*.csv", "checkpoint_*.json", "extraction_models.json")
+
+
+def _reset_index(verbose=True):
+    removed = []
+    for pattern in INDEX_ARTIFACTS:
+        for f in PROCESSED.glob(pattern):
+            f.unlink(); removed.append(str(f))
+    chroma = PROCESSED / "chroma_db"
+    if chroma.exists():
+        shutil.rmtree(chroma); removed.append(str(chroma))
+    if verbose:
+        for r in removed:
+            print(f"  - {r}")
+        print(f"[OK] {len(removed)} item dihapus. PDF dan paper_metadata.json dipertahankan; "
+              f"jalankan: python main.py build")
+    return removed
+
+
+def cmd_reset_index(args):
+    print("Akan MENGHAPUS indeks hasil build (untuk build ulang, mis. setelah ganti model embedding):")
+    print("  - chroma_db/, graph.graphml, manifest.json, visualisasi, log & checkpoint")
+    print(f"  Dipertahankan: {len(list(RAW.glob('*.pdf')))} PDF di data/raw/ dan paper_metadata.json")
+    if not args.yes:
+        if (PROCESSED / "graph.graphml").exists():
+            print("\n[!] Belum di-backup? Batalkan lalu jalankan: python corpus.py backup <nama-tema>")
+        if input("Lanjut hapus? [y/N] ").strip().lower() != "y":
+            print("Dibatalkan.")
+            return
+    _reset_index()
+
+
 def cmd_restore(args):
     if not _valid_name(args.name):
         print(f"[!] Nama backup '{args.name}' tidak valid (tanpa '/', '\\' atau '..').")
@@ -330,6 +365,9 @@ def main():
     p_c = sub.add_parser("clear", help="kosongkan korpus aktif")
     p_c.add_argument("-y", "--yes", action="store_true", help="tanpa konfirmasi")
 
+    p_x = sub.add_parser("reset-index", help="hapus indeks hasil build, pertahankan PDF + paper_metadata.json")
+    p_x.add_argument("-y", "--yes", action="store_true", help="tanpa konfirmasi")
+
     p_r = sub.add_parser("restore", help="pulihkan korpus dari backup")
     p_r.add_argument("name", help="nama backup")
     p_r.add_argument("-y", "--yes", action="store_true", help="tanpa konfirmasi")
@@ -342,7 +380,7 @@ def main():
         ap.print_help()
         sys.exit(1)
     {"list": cmd_list, "backup": cmd_backup, "clear": cmd_clear, "restore": cmd_restore,
-     "manifest": cmd_manifest, "audit": cmd_audit}[args.cmd](args)
+     "reset-index": cmd_reset_index, "manifest": cmd_manifest, "audit": cmd_audit}[args.cmd](args)
 
 
 if __name__ == "__main__":
