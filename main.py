@@ -13,7 +13,7 @@ from src.vectorstore.chromadb_store import ChromaStore
 from src.engine import GraphRAGEngine
 from src.config import ExtractedKnowledge, load_paper_metadata, save_paper_metadata
 from src.security.integrity import (
-    ArtifactIntegrityError, atomic_write_json, build_manifest, write_manifest,
+    ArtifactIntegrityError, atomic_write_json, build_manifest, chroma_stats, write_manifest,
 )
 
 # ──────────────────────────────────────────
@@ -60,6 +60,19 @@ def _load_checkpoint():
         else:  # legacy format: a bare knowledge dict, no chunk_id
             items.append((None, ExtractedKnowledge.model_validate(entry)))
     return set(payload["done_chunk_ids"]), items
+
+def _vector_store_mismatch(chroma, embed):
+    """Pesan error bila ChromaDB berisi vektor berdimensi lain dari model embedding sekarang, else None."""
+    stored = chroma_stats(chroma)["dimension"]
+    if stored is None:  # store kosong: aman
+        return None
+    current = len(embed.embed_text("dimension probe"))
+    if stored == current:
+        return None
+    return (f"ChromaDB berisi vektor {stored} dimensi, model embedding sekarang menghasilkan {current} "
+            f"dimensi (model diganti?). Build dihentikan sebelum memakai kuota LLM. Kosongkan indeks "
+            f"dulu: `python corpus.py reset-index` (PDF dan paper_metadata.json dipertahankan).")
+
 
 def _stop_for_quota(stage: str, exc: Exception):
     """Kuota harian habis setelah dedup. Checkpoint ekstraksi + dedup masih ada, jadi re-run
@@ -114,6 +127,14 @@ def build_pipeline():
     # 2. Setup Clients
     llm = LLMService()
     embed = EmbeddingClient()
+
+    # Preflight (before any LLM call): chunks are upserted into the existing Chroma collections only at
+    # step 7. A store built by another embedding model (other dimension) would reject them there —
+    # after the whole LLM quota of the build has been spent.
+    problem = _vector_store_mismatch(ChromaStore(), embed)
+    if problem:
+        print(f"\n[ERROR] {problem}")
+        return
 
     # 2a. Auto paper metadata (replaces the old hardcoded PAPER_METADATA): one LLM call per PDF
     #     extracts the title + popular model names, cached to JSON (resumable).

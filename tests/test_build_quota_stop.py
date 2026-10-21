@@ -27,6 +27,7 @@ class _FakeLLM:
         self.summary_quota, self.dedup_calls, self.last_model = summary_quota, [], "gemini-3.5-flash-lite"
 
     def extract_paper_metadata(self, text):
+        self.metadata_calls = getattr(self, "metadata_calls", 0) + 1
         return PaperMeta(title="A Paper", models=[])
 
     def extract_entities(self, text, paper_title=None):
@@ -56,7 +57,24 @@ class _FakeEmbed:
         return [[1.0, 0.0] for _ in texts]
 
 
+class _FakeCollection:
+    def __init__(self, dim):
+        self.dim = dim
+
+    def count(self):
+        return 1 if self.dim else 0
+
+    def peek(self, n):
+        return {"embeddings": [[0.0] * self.dim]}
+
+
 class _FakeChroma:
+    stored_dim = None  # dimensi vektor yang sudah tersimpan (None = store kosong)
+
+    def __init__(self):
+        self.chunks_collection = _FakeCollection(self.stored_dim)
+        self.community_collection = _FakeCollection(None)
+
     def add_chunks(self, *a):
         pass
 
@@ -111,6 +129,22 @@ def test_summary_quota_stops_build_keeps_checkpoints_and_rerun_skips_dedup(env):
     assert "Stochastic Gradient Descent" in nodes and "SGD optimizer" not in nodes  # nama kanonik
     assert not (env["tmp"] / "checkpoint_extraction.json").exists()
     assert not (env["tmp"] / "checkpoint_dedup.json").exists()
+
+
+def test_embedding_dimension_mismatch_stops_before_any_llm_call(env, monkeypatch):
+    # Store dibangun model lain (384 dim); model palsu sekarang menghasilkan 2 dim.
+    monkeypatch.setattr(_FakeChroma, "stored_dim", 384)
+    env["llm"] = _FakeLLM()
+    main.build_pipeline()
+    assert getattr(env["llm"], "metadata_calls", 0) == 0 and env["llm"].dedup_calls == []
+    assert not (env["tmp"] / "checkpoint_extraction.json").exists()
+
+
+def test_matching_embedding_dimension_passes_preflight(env, monkeypatch):
+    monkeypatch.setattr(_FakeChroma, "stored_dim", 2)  # sama dengan _FakeEmbed
+    env["llm"] = _FakeLLM()
+    main.build_pipeline()
+    assert env["saved_graphs"]  # build berjalan sampai selesai
 
 
 def test_family_merge_quota_stops_build(env, monkeypatch):
