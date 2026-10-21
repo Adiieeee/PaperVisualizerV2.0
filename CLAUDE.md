@@ -6,11 +6,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 GraphRAG Paper Explorer: builds a knowledge graph (NetworkX) from PDFs in `data/raw/`, then answers questions over it by combining graph traversal, ChromaDB vector search, and LLM generation (Gemini via LiteLLM, optional Groq fallback). The app is an interactive graph visualizer (pyvis/vis.js) with a chatbot panel, served by FastAPI. Docs, UI text and most prompts are in Indonesian; answers are generated in the language of the question.
 
-**Hard constraint: $0 budget.** Free tiers without a credit card only: Gemini via Google AI Studio (`gemini/gemini-flash-lite-latest`) as primary, Groq (e.g. `groq/openai/gpt-oss-120b`) as optional fallback, both through LiteLLM (no proxy, no cache). Embeddings run locally (`BAAI/bge-small-en-v1.5` on CPU), never through LiteLLM. No paid/cloud services.
+**Hard constraint: $0 budget.** Free tiers without a credit card only: Gemini via Google AI Studio (`gemini/gemini-flash-lite-latest`) as primary, Groq (e.g. `groq/openai/gpt-oss-120b`) as optional fallback, both through LiteLLM (no proxy, no cache). Embeddings run locally (`BAAI/bge-m3`, multilingual, 1024 dims; GPU when available, else CPU), never through LiteLLM. No paid/cloud services.
 
 ## Commands
 
 Setup: `pip install -r requirements.txt` (`requirements-dev.txt` adds pytest/httpx), and put `GEMINI_API_KEY=...` in `.env` (copy `.env.example`; loaded in `src/config.py`). Optional: `GROQ_API_KEY` + `GROQ_MODEL` enable the Groq fallback (either empty = no fallback); `GEMINI_MODEL` overrides the Gemini model (LiteLLM `provider/model` names). `requirements.lock.txt` is a reproducibility reference (Python 3.14.6, Windows), not the install path.
+
+GPU (optional, ~5x faster embedding): `pip install torch==2.13.0+cu126 --index-url https://download.pytorch.org/whl/cu126` replaces the CPU torch wheel (tested on a GTX 1650 4 GB; bge-m3 fp32 peaks at ~2.6 GB VRAM). `EMBEDDING_DEVICE=auto|cpu|cuda` (default `auto`). Vectors stay fp32, so a store built on GPU is queried correctly on CPU (cosine 1.0). fp16 was slower on that card and shifts vectors, so it is not used.
 
 ```powershell
 python main.py build                    # PDFs in data/raw/ -> graph.graphml + chroma_db + manifest.json (uses LLM quota)
@@ -20,9 +22,11 @@ python evaluate.py                      # retrieval-level eval, free (no LLM), r
 python evaluate.py --e2e                # full engine.query per case (router + generation, uses quota)
 python -m pytest tests -q               # unit/security tests: no network, no LLM quota (~10 s)
 python corpus.py list|backup <name>|clear|restore <name>   # swap paper corpora without rebuilding
+python corpus.py reset-index            # delete build outputs (chroma_db, graph, manifest, checkpoints); keeps PDFs + paper_metadata.json
 python corpus.py manifest               # write manifest.json for the ACTIVE corpus (no rebuild)
 python corpus.py audit                  # read-only scan of graph + chunks for injection-like text
 python -m scripts.test_llm_client       # live LiteLLM smoke test: Gemini, simulated-quota Groq fallback, schemas (~6 requests)
+python -m scripts.calibrate_embedding --model <hf id> --revision <sha>   # recalibrate embedding thresholds, no LLM quota
 ```
 
 - `evaluate.py` is the retrieval regression harness; run it after any query-time change and compare the score before → after. It has no per-case filter. Cases with `e2e_only` / `expected_refuse` are excluded from the retrieval score and only graded by `--e2e` (`must_not_contain` flags leaked/obeyed injected content).
@@ -81,6 +85,7 @@ Structured output is sent via `response_format_for(schema)`: a non-strict JSON s
 - **Graph is an undirected `nx.Graph`** with at most one edge per node pair (the first relation wins on duplicates); `source/target` direction in the context is derived from traversal order, not stored. GraphML round-trips force all attributes to strings.
 - **Synthetic relations** `mentioned_in` and `variant_of` are added by the builder, not the LLM (`variant_of` is not in `RELATION_TYPES`). They are excluded from degree counts in both `analytics.get_counting_stats` and `visualizer._insights` — keep the two in sync.
 - **Adding an entity/relation type** touches `config.py` Literals, the extraction prompt in `llm_service.py`, and the visualizer's `NODE_COLORS`/`EDGE_COLORS`/`*_DESCRIPTIONS`.
+- **Changing the embedding model** (`EMBEDDING_MODEL_NAME/REVISION/DIMENSION`): `DEDUP_SIMILARITY_THRESHOLD` and `RESOLVER_SIM_THRESHOLD` (config.py) are tied to the model's score distribution, so recalibrate them with `scripts/calibrate_embedding.py`. It re-scores the last build's `similarity_debug.csv` and sweeps the resolver on a temporary store; judge the listed LLM merges by hand, because the old LLM approved some wrong merges. Then run `corpus.py reset-index` and rebuild. The build refuses to start (before any LLM call) if Chroma holds vectors of another dimension. `EMBEDDING_MAX_SEQ_LENGTH` (1024, capped at the model's own limit) is part of the manifest too.
 - **Vector layer is protected.** Post-extraction cleaning, author normalization, and graph post-processing are graph-only by design; don't change them in ways that alter chunk embeddings, the embedding-based dedup, or the ChromaDB collections without checking the effect on retrieval.
 - **Build-time changes are expensive.** The extraction and dedup checkpoints are kept until the build completes and deleted only then, so any change to extraction, dedup, or graph building means re-extracting every chunk with LLM quota. Prefer query-time changes (measurable free with `evaluate.py`) and `corpus.py backup` before `clear`. `chroma_db` is upserted, never wiped by `build` — stale chunks from a previous corpus survive unless you `corpus.py clear`.
 - **Quota/rate handling**: every LLM call `time.sleep(6.0)`s afterward (~10 req/min). Daily-quota detection is a message match (`PerDay` / `per day`) in `llm_client.is_daily_quota_error`, only tested against synthetic errors. When no fallback is left, `DailyQuotaExceededError` (= `LLMQuotaError`) is raised and not retried. `build` then stops with a message at whatever stage hit it (extraction, dedup after saving its checkpoint, family merge, community summaries) and re-running resumes from the checkpoints. `graph.graphml` is saved only after the last quota-dependent stage. `server.py` chat and `evaluate.py --e2e` consume the same daily quotas.
@@ -92,4 +97,4 @@ Structured output is sent via `response_format_for(schema)`: a non-strict JSON s
 ## Workflow conventions
 
 - Don't add new retrieval/resolution heuristics without a measured failing case in `eval/eval_cases.json`; report the `evaluate.py` score before → after.
-- Current baseline (2026-07-31 corpus, 8 sycophancy papers): retrieval 29/31 = 94% (remaining failures are documented Indonesian-paraphrase resolution limits).
+- Current baseline (2026-07-31 corpus, 8 sycophancy papers, bge-small-en-v1.5): retrieval 29/31 = 94% (remaining failures are documented Indonesian-paraphrase resolution limits). The bge-m3 calibration on that graph gave 30/31; replace this baseline after the bge-m3 rebuild.
