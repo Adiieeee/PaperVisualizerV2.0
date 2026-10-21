@@ -117,6 +117,21 @@ def test_changed_model_revision_is_rejected(art, monkeypatch):
         I.check_artifacts(art.graph_path, art.G, art.chroma, FakeEmbed(), art.manifest_path)
 
 
+def test_changed_max_seq_length_is_rejected(art, monkeypatch):
+    m = _write(art)
+    assert m["embedding"]["max_seq_length"] == config.EMBEDDING_MAX_SEQ_LENGTH
+    monkeypatch.setattr(config, "EMBEDDING_MAX_SEQ_LENGTH", config.EMBEDDING_MAX_SEQ_LENGTH + 1)
+    with pytest.raises(I.ArtifactIntegrityError, match="EMBEDDING_MAX_SEQ_LENGTH"):
+        I.check_artifacts(art.graph_path, art.G, art.chroma, FakeEmbed(), art.manifest_path)
+
+
+def test_old_manifest_without_max_seq_length_is_accepted(art):
+    m = _write(art)
+    del m["embedding"]["max_seq_length"]
+    I.write_manifest(m, art.manifest_path)
+    assert I.check_artifacts(art.graph_path, art.G, art.chroma, FakeEmbed(), art.manifest_path) is True
+
+
 def test_different_query_dimension_is_rejected(art):
     _write(art)
     with pytest.raises(I.ArtifactIntegrityError, match="Dimensi embedding"):

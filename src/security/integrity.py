@@ -107,6 +107,7 @@ def build_manifest(graph_path: str, graph, chroma) -> dict:
             "model": config.EMBEDDING_MODEL_NAME,
             "revision": config.EMBEDDING_MODEL_REVISION,
             "dimension": stats["dimension"] or config.EMBEDDING_DIMENSION,
+            "max_seq_length": config.EMBEDDING_MAX_SEQ_LENGTH,  # memotong teks panjang -> ikut ruang embedding
         },
         "schema_fingerprint": schema_fingerprint(),
         "graph": {
@@ -153,6 +154,11 @@ def verify_manifest(manifest: dict, *, graph_path: str, graph, chroma,
         problems.append(
             f"Revisi model embedding berubah: store dibangun dengan revisi '{emb.get('revision')}', config "
             f"sekarang '{config.EMBEDDING_MODEL_REVISION}'. Kembalikan revisinya, atau build ulang."
+        )
+    if emb.get("max_seq_length") not in (None, config.EMBEDDING_MAX_SEQ_LENGTH):  # None = manifest lama
+        problems.append(
+            f"EMBEDDING_MAX_SEQ_LENGTH berubah: store dibangun dengan {emb.get('max_seq_length')}, config "
+            f"sekarang {config.EMBEDDING_MAX_SEQ_LENGTH} (teks panjang dipotong berbeda). Kembalikan, atau build ulang."
         )
     if query_dimension is not None and emb.get("dimension") not in (None, query_dimension):
         problems.append(
