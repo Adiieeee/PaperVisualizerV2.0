@@ -47,7 +47,7 @@ class QueryResolver:
         self._node_embs = None
         self.model_to_paper = load_model_to_paper()  # auto-generated paper aliases (B2)
 
-    def resolve_entity(self, query: str, sim_threshold: float = RESOLVER_SIM_THRESHOLD,
+    def resolve_entity(self, query: str, sim_threshold: Optional[float] = None,
                        context_query: str = None) -> Optional[str]:
         """
         Layered entity resolution → canonical graph node name (or None if truly unresolvable,
@@ -114,8 +114,10 @@ class QueryResolver:
             print(f"Fuzzy matched '{query}' -> '{best_match}' (ratio {highest:.2f})")
             return best_match
 
-        # 4. Vector-native: nearest node by embedding
-        node = self._embedding_resolve(q, sim_threshold)
+        # 4. Vector-native: nearest node by embedding (threshold read at call time so it can be
+        #    swept by scripts/calibrate_embedding.py)
+        threshold = RESOLVER_SIM_THRESHOLD if sim_threshold is None else sim_threshold
+        node = self._embedding_resolve(q, threshold)
         if node:
             return node
 
