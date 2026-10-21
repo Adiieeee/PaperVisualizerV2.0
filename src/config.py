@@ -17,12 +17,13 @@ GROQ_MODEL = os.getenv("GROQ_MODEL") or None
 
 # --- Constants ---
 # Embedding Model (lokal; GPU bila tersedia, selain itu CPU)
-EMBEDDING_MODEL_NAME = "BAAI/bge-small-en-v1.5"
+# bge-m3: multilingual (korpus Inggris, pertanyaan sering Indonesia), tanpa trust_remote_code, MIT.
+EMBEDDING_MODEL_NAME = "BAAI/bge-m3"
 # Revisi (commit) model yang dipin: perubahan bobot di hub tidak boleh mengubah ruang embedding diam-diam.
 # Nilai ini = snapshot yang membangun korpus saat ini. Mengubahnya (atau model di atas) berarti korpus
 # harus dibangun ulang — manifest (src/security/integrity.py) akan menolak start bila tidak cocok.
-EMBEDDING_MODEL_REVISION = "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a"
-EMBEDDING_DIMENSION = 384  # bge-small-en-v1.5
+EMBEDDING_MODEL_REVISION = "5617a9f61b028005a4858fdac845db406aefb181"
+EMBEDDING_DIMENSION = 1024  # bge-m3
 # "auto" = cuda bila torch versi CUDA terpasang dan GPU terdeteksi, selain itu cpu. Vektor tetap fp32
 # supaya build (mis. di GPU) dan query (mis. server di CPU) berada di ruang yang sama.
 EMBEDDING_DEVICE = os.getenv("EMBEDDING_DEVICE", "auto")  # auto | cpu | cuda
@@ -43,9 +44,13 @@ MAX_PDF_BYTES = 50 * 1024 * 1024
 # --- Ambang yang TERIKAT model embedding: kalibrasi ulang bila EMBEDDING_MODEL_NAME diganti ---
 # (sebaran skor cosine tiap model berbeda; lihat scripts/calibrate_embedding.py)
 # Dedup: pasangan entitas >= ambang dikirim ke LLM untuk dikonfirmasi (menentukan pemakaian kuota).
-DEDUP_SIMILARITY_THRESHOLD = 0.85  # Optimized threshold after diagnostic analysis (catches genuine synonyms, reduces LLM noise)
+# bge-m3 (kalibrasi 2026-10-21): 221 kandidat vs 267 dulu; merge benar lama >= 0.76, kebanyakan merge
+# keliru lama (versi model berbeda, hipernim) < 0.75. Dulu 0.85 untuk bge-small-en-v1.5.
+DEDUP_SIMILARITY_THRESHOLD = 0.75
 # Resolver lapis 4: node terdekat secara embedding dipakai bila kemiripannya >= ambang ini.
-RESOLVER_SIM_THRESHOLD = 0.72
+# bge-m3: parafrase Indonesia yang benar >= 0.638, salah cocok teramati <= 0.600 (jarak tipis; cek ulang
+# dengan evaluate.py setelah build). Dulu 0.72 untuk bge-small-en-v1.5.
+RESOLVER_SIM_THRESHOLD = 0.62
 
 # --- Post-extraction cleaning (graph quality; does NOT affect the vector store) ---
 MIN_ENTITY_NAME_LENGTH = 2  # Entities whose normalized name is shorter than this are dropped.

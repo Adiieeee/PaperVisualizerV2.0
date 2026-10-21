@@ -19,7 +19,7 @@ def resolve_device(setting: str = EMBEDDING_DEVICE) -> str:
 
 class EmbeddingClient:
     def __init__(self):
-        # Local model pinned to an exact hub revision; GPU when available (see EMBEDDING_DEVICE)
+        # Local model (bge-m3) pinned to an exact hub revision; GPU when available (see EMBEDDING_DEVICE)
         self.device = resolve_device()
         print(f"Loading local embedding model: {EMBEDDING_MODEL_NAME} on {self.device}...")
         self.model = SentenceTransformer(EMBEDDING_MODEL_NAME, device=self.device, revision=EMBEDDING_MODEL_REVISION)
