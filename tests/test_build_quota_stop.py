@@ -80,7 +80,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(D, "DEDUP_CHECKPOINT_PATH", str(tmp_path / "checkpoint_dedup.json"))
     monkeypatch.setattr(D, "SIMILARITY_DEBUG_PATH", str(tmp_path / "similarity_debug.csv"))
     monkeypatch.setattr(main.DocumentProcessor, "process_directory", lambda self, d: [dict(c) for c in CHUNKS])
-    monkeypatch.setattr(main, "GeminiClient", lambda: state["llm"])
+    monkeypatch.setattr(main, "LLMService", lambda: state["llm"])
     monkeypatch.setattr(main, "EmbeddingClient", _FakeEmbed)
     monkeypatch.setattr(main, "load_paper_metadata", lambda: {})
     monkeypatch.setattr(main, "save_paper_metadata", lambda m: None)

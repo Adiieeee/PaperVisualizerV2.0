@@ -29,7 +29,7 @@ from pydantic import BaseModel, field_validator
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from src import config
-from src.llm.gemini_client import DailyQuotaExceededError, EmptyResponseError
+from src.llm.llm_service import DailyQuotaExceededError, EmptyResponseError
 from src.security.integrity import ArtifactIntegrityError
 from src.security.guards import (
     ChatGuard,

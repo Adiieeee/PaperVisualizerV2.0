@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from src.llm import gemini_client as gc
+from src.llm import llm_service as svc
 from src.llm.prompts import (
     ANSWER_SYSTEM_PROMPT,
     KIND_COMMUNITY,
@@ -70,7 +70,7 @@ def test_system_prompt_states_security_and_keeps_answer_rules():
     assert "don't know" in p and "no information" in p
 
 
-# --- GeminiClient (call_llm di-mock: tanpa jaringan/kuota) ----------------------------------------
+# --- LLMService (call_llm di-mock: tanpa jaringan/kuota) ----------------------------------------
 
 class _FakeLLM:
     """Meniru llm_client.call_llm: (hasil, model). Dengan schema -> instance Pydantic atau
@@ -91,15 +91,15 @@ class _FakeLLM:
 
 def _client(text, monkeypatch):
     fake = _FakeLLM(text)
-    monkeypatch.setattr(gc, "call_llm", fake)
-    c = object.__new__(gc.GeminiClient)  # lewati __init__ (tidak butuh key/jaringan)
+    monkeypatch.setattr(svc, "call_llm", fake)
+    c = object.__new__(svc.LLMService)  # lewati __init__ (tidak butuh key/jaringan)
     c.last_model, c.fake = None, fake
     return c
 
 
 @pytest.fixture(autouse=True)
 def _no_sleep(monkeypatch):
-    monkeypatch.setattr(gc.time, "sleep", lambda s: None)
+    monkeypatch.setattr(svc.time, "sleep", lambda s: None)
 
 
 def test_generate_final_answer_uses_tagged_prompt_and_caps_output(monkeypatch):
@@ -116,7 +116,7 @@ def test_generate_final_answer_uses_tagged_prompt_and_caps_output(monkeypatch):
 @pytest.mark.parametrize("empty", [None, "", "   " + chr(10)])
 def test_empty_response_raises_and_is_not_retried(empty, monkeypatch):
     c = _client(empty, monkeypatch)
-    with pytest.raises(gc.EmptyResponseError):
+    with pytest.raises(svc.EmptyResponseError):
         c.generate_final_answer("Q?", [(KIND_GRAPH, "ctx")])
     assert len(c.fake.calls) == 1  # tanpa retry (deterministik)
 
@@ -156,13 +156,13 @@ def test_merge_decision_parse_failure_is_conservative(monkeypatch):
 
 def test_daily_quota_error_is_shared_with_llm_client():
     from src.llm import llm_client
-    assert gc.DailyQuotaExceededError is llm_client.DailyQuotaExceededError
+    assert svc.DailyQuotaExceededError is llm_client.DailyQuotaExceededError
 
 
 def test_retry_predicate():
-    assert gc._is_retryable(RuntimeError("429 transient")) is True
-    assert gc._is_retryable(gc.DailyQuotaExceededError("x")) is False
-    assert gc._is_retryable(gc.EmptyResponseError("x")) is False
+    assert svc._is_retryable(RuntimeError("429 transient")) is True
+    assert svc._is_retryable(svc.DailyQuotaExceededError("x")) is False
+    assert svc._is_retryable(svc.EmptyResponseError("x")) is False
 
 
 def test_router_prompt_wraps_and_neutralizes_query(monkeypatch):

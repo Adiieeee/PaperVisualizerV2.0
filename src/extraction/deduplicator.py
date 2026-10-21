@@ -3,7 +3,7 @@ import json
 import csv
 import re
 from typing import List, Dict, Optional
-from src.llm.gemini_client import GeminiClient
+from src.llm.llm_service import LLMService
 from src.llm.llm_client import LLMQuotaError
 from src.llm.embedding import EmbeddingClient
 from src.config import DEDUP_SIMILARITY_THRESHOLD, Entity
@@ -176,7 +176,7 @@ def _load_dedup_decision_models() -> dict:
 # Deduplicator
 # ──────────────────────────────────────────
 class HybridDeduplicator:
-    def __init__(self, llm_client: GeminiClient, embed_client: EmbeddingClient):
+    def __init__(self, llm_client: LLMService, embed_client: EmbeddingClient):
         self.llm = llm_client
         self.embed = embed_client
         self.master_list: Dict[str, Dict[str, Dict]] = {}

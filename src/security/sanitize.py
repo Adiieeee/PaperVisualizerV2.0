@@ -17,7 +17,7 @@ from typing import List, Optional
 # Zero-width space yang disisipkan ke dalam tag pembatas untuk merusaknya.
 _ZWSP = chr(0x200B)
 
-# Tag pembatas yang dipakai prompt di src/llm/prompts.py dan prompt build-time di gemini_client.py.
+# Tag pembatas yang dipakai prompt di src/llm/prompts.py dan prompt build-time di llm_service.py.
 # Tambahkan di sini setiap kali sebuah prompt memperkenalkan tag pembatas baru.
 PROTECTED_TAGS = [
     "konteks_graf",

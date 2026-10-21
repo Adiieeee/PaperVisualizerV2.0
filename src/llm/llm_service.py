@@ -33,7 +33,7 @@ from src.llm.prompts import build_answer_prompt, ContextBlock
 from src.security.sanitize import neutralize_tags
 from typing import Iterable
 
-class GeminiClient:
+class LLMService:
     """Fasad semua panggilan LLM pipeline, semuanya lewat LiteLLM (call_llm, src/llm/llm_client.py).
     Alias "general": Gemini, pindah ke Groq hanya saat kuota harian Gemini habis. Alias "dedup"
     (resolve_dedup, resolve_family_merge): Gemini saja — keputusan merge harus dari satu model.

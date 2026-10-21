@@ -9,7 +9,7 @@ Alias:
 
 Fallback sengaja tidak memakai `fallbacks=` milik Router: itu memindah ke Groq pada SETIAP
 kegagalan (429 per menit, 503, cooldown). Di sini 429 per menit dan 5xx di-raise apa adanya dan
-diretry ke Gemini oleh tenacity di GeminiClient. Router juga tidak meretry (num_retries=0) dan
+diretry ke Gemini oleh tenacity di LLMService. Router juga tidak meretry (num_retries=0) dan
 tanpa cooldown — dua lapis retry akan melipatgandakan request dan membakar kuota.
 """
 import json

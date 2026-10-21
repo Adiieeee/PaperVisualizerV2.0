@@ -3,7 +3,7 @@ import os
 import json
 
 from src.ingestion.document import DocumentProcessor
-from src.llm.gemini_client import GeminiClient, DailyQuotaExceededError
+from src.llm.llm_service import LLMService, DailyQuotaExceededError
 from src.llm.embedding import EmbeddingClient
 from src.extraction.cleaner import clean_knowledge_list, preprocess_authors
 from src.extraction.deduplicator import HybridDeduplicator, extract_acronyms_from_texts, register_acronyms
@@ -112,7 +112,7 @@ def build_pipeline():
     print(f"Total chunks to process: {len(chunks)}")
 
     # 2. Setup Clients
-    llm = GeminiClient()
+    llm = LLMService()
     embed = EmbeddingClient()
 
     # 2a. Auto paper metadata (replaces the old hardcoded PAPER_METADATA): one LLM call per PDF

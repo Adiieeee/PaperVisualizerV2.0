@@ -1,9 +1,9 @@
 from typing import List, Dict
-from src.llm.gemini_client import GeminiClient
+from src.llm.llm_service import LLMService
 from src.config import ExtractedKnowledge
 
 class KnowledgeExtractor:
-    def __init__(self, llm_client: GeminiClient):
+    def __init__(self, llm_client: LLMService):
         self.llm = llm_client
 
     def extract_from_chunks(self, chunks: List[Dict[str, str]]) -> List[ExtractedKnowledge]:

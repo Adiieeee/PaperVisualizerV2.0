@@ -1,6 +1,6 @@
 import networkx as nx
 
-from src.llm.gemini_client import GeminiClient
+from src.llm.llm_service import LLMService
 from src.llm.embedding import EmbeddingClient
 from src.llm.prompts import KIND_GRAPH, KIND_TEXT, KIND_COMMUNITY
 from src.vectorstore.chromadb_store import ChromaStore
@@ -12,7 +12,7 @@ from src.security.integrity import check_artifacts
 
 class GraphRAGEngine:
     def __init__(self, graph_path: str = "data/processed/graph.graphml"):
-        self.llm = GeminiClient()
+        self.llm = LLMService()
         self.embed = EmbeddingClient()
         self.chroma = ChromaStore()
         

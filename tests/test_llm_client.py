@@ -122,7 +122,7 @@ def test_gemini_daily_quota_on_dedup_never_uses_groq():
     litellm.Timeout(message="timeout", llm_provider="gemini", model="x"),
 ])
 def test_transient_gemini_errors_do_not_use_groq(exc):
-    # Di-raise apa adanya -> tenacity di GeminiClient meretry ke Gemini dengan jeda.
+    # Di-raise apa adanya -> tenacity di LLMService meretry ke Gemini dengan jeda.
     r = _FakeRouter(content=OK_JSON, exc=exc)
     with pytest.raises(type(exc)):
         lc.call_llm(MSGS, alias="general", router=r)

@@ -7,7 +7,7 @@ from starlette.testclient import TestClient
 
 import server
 from src import config
-from src.llm.gemini_client import DailyQuotaExceededError, EmptyResponseError
+from src.llm.llm_service import DailyQuotaExceededError, EmptyResponseError
 from src.security.guards import (
     ChatGuard,
     ConcurrencyGate,
