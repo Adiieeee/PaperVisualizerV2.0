@@ -128,3 +128,33 @@ def test_traverse_unlimited_records_at_least_as_much(max_rels):
     nx.set_edge_attributes(G, "uses_method", "relation")
     res = GraphTraversal(G).traverse(0, max_hops=2, max_rels=max_rels)
     assert len(res["relationships"]) == 2
+
+
+def test_fact_embeddings_persist_to_disk_and_are_reused(tmp_path):
+    path = str(tmp_path / "fact_embeddings.npz")
+    trav = _trav([_rel("E", "M", "uses_metric", 1)])
+    first = _Embed({"M": 0.5})
+    GraphFactReranker(first, cache_path=path).select(trav, "q", 150)
+    assert first.batches == [["E uses_metric M"]]
+
+    second = _Embed({"M": 0.5})  # "restart": instance baru, cache dimuat dari disk
+    out = GraphFactReranker(second, cache_path=path).select(trav, "q", 150)
+    assert second.batches == [] and _pairs(out) == [("E", "M")]
+
+
+def test_cache_from_another_model_or_corrupt_file_is_ignored(tmp_path, monkeypatch):
+    import src.query.graph_rerank as GR
+    path = str(tmp_path / "fact_embeddings.npz")
+    trav = _trav([_rel("E", "M", "uses_metric", 1)])
+    GraphFactReranker(_Embed({}), cache_path=path).select(trav, "q", 150)
+
+    monkeypatch.setattr(GR, "_CACHE_MODEL_ID", "other-model@rev/seq512")
+    other = _Embed({})
+    GraphFactReranker(other, cache_path=path).select(trav, "q", 150)
+    assert other.batches == [["E uses_metric M"]]  # dihitung ulang, bukan memakai vektor model lain
+
+    with open(path, "wb") as f:
+        f.write(b"bukan npz")
+    broken = _Embed({})
+    GraphFactReranker(broken, cache_path=path).select(trav, "q", 150)
+    assert broken.batches == [["E uses_metric M"]]

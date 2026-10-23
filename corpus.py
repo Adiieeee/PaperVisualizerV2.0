@@ -156,7 +156,7 @@ def _wipe_current(verbose=True):
         f.unlink(); removed.append(str(f))
     for pattern in ("graph.graphml", "paper_metadata.json", "graph_visualization.html",
                     "similarity_debug*.csv", "checkpoint_*.json", "extraction_cache.json",
-                    "extraction_models.json"):
+                    "extraction_models.json", "fact_embeddings.npz"):
         for f in PROCESSED.glob(pattern):
             f.unlink(); removed.append(str(f))
     chroma = PROCESSED / "chroma_db"
@@ -194,7 +194,8 @@ def cmd_clear(args):
 # extraction_cache.json (keluaran LLM, tidak bergantung pada embedding) sengaja TIDAK termasuk.
 # extraction_models.json = berkas lama (sebelum arsip ekstraksi), dibersihkan bila masih ada.
 INDEX_ARTIFACTS = ("graph.graphml", "manifest.json", "graph_visualization.html",
-                   "similarity_debug*.csv", "checkpoint_*.json", "extraction_models.json")
+                   "similarity_debug*.csv", "checkpoint_*.json", "extraction_models.json",
+                   "fact_embeddings.npz")
 
 
 def _reset_index(verbose=True):

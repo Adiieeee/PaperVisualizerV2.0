@@ -107,6 +107,8 @@ SECTION_FILTER_MIN_POSITION = 0.20
 # Papers rarely use their own popular name (the VGG paper never writes "VGG-16"), so we rely on
 # the LLM's world knowledge for the model aliases — which generalizes to any paper corpus.
 PAPER_METADATA_PATH = "data/processed/paper_metadata.json"
+# Cache embedding teks fakta graph untuk rerank (query-time, turunan; aman dihapus kapan saja).
+FACT_EMBEDDINGS_PATH = "data/processed/fact_embeddings.npz"
 
 
 def load_paper_metadata() -> dict:

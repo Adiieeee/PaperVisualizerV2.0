@@ -10,7 +10,7 @@ from src.query.traversal import GraphTraversal
 from src.query.graph_rerank import GraphFactReranker
 from src.graph.analytics import GraphAnalytics
 from src.security.integrity import check_artifacts
-from src.config import load_paper_metadata
+from src.config import FACT_EMBEDDINGS_PATH, load_paper_metadata
 
 # Jawaban tetap (tanpa panggilan LLM) bila pencarian vektor tidak menemukan apa pun di atas ambang
 # relevansi. Dwibahasa karena bahasa pertanyaan tidak dideteksi; frasanya dikenali evaluate.REFUSAL.
@@ -46,7 +46,7 @@ class GraphRAGEngine:
         self.router = QueryRouter(self.llm)
         self.resolver = QueryResolver(self.embed, self.chroma, self.graph)
         self.traversal = GraphTraversal(self.graph)
-        self.reranker = GraphFactReranker(self.embed)
+        self.reranker = GraphFactReranker(self.embed, cache_path=FACT_EMBEDDINGS_PATH)
         self.analytics = GraphAnalytics(self.graph)
         self.paper_titles = {doc: m.get("title") for doc, m in load_paper_metadata().items()}
 

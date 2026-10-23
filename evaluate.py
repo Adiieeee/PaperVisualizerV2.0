@@ -23,6 +23,7 @@ from src.vectorstore.chromadb_store import ChromaStore
 from src.query.resolver import QueryResolver
 from src.query.traversal import GraphTraversal
 from src.query.graph_rerank import GraphFactReranker
+from src.config import FACT_EMBEDDINGS_PATH
 from src.graph.analytics import GraphAnalytics
 from src.security.integrity import ArtifactIntegrityError, check_artifacts
 
@@ -51,7 +52,7 @@ def retrieval_context(case, resolver, traversal, analytics, reranker=None):
     nodes = resolver.resolve_entities(case["q"], context_query=case["q"])
     if nodes:
         budget = 150 if len(nodes) == 1 else 125
-        reranker = reranker or GraphFactReranker(resolver.embed)
+        reranker = reranker or GraphFactReranker(resolver.embed, cache_path=FACT_EMBEDDINGS_PATH)
         text = "\n".join(
             traversal.format_traversal_context(
                 reranker.select(traversal.traverse(n, max_hops=2, max_rels=None), case["q"], budget))
@@ -81,7 +82,7 @@ def run_retrieval(cases, G):
     resolver = QueryResolver(embed, chroma, G)
     traversal = GraphTraversal(G)
     analytics = GraphAnalytics(G)
-    reranker = GraphFactReranker(embed)  # one instance: fact embeddings are cached across cases
+    reranker = GraphFactReranker(embed, cache_path=FACT_EMBEDDINGS_PATH)  # fact embeddings cached across cases/runs
 
     # `e2e_only` (security cases: prompt-injection / format / language) are judged on the final LLM
     # answer, so they must stay OUT of the retrieval score — with no expected_contains they would

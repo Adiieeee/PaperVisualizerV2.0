@@ -3,8 +3,10 @@ Rerank fakta graph terhadap pertanyaan: pangkas node yang melebihi budget menuru
 urutan BFS/GraphML) dan urutkan konteks supaya fakta yang paling relevan muncul lebih dulu.
 
 Skor = cosine bge-m3 (model embedding yang sudah dimuat engine, tanpa model baru) antara pertanyaan asli
-user dan teks fakta "source relation target — deskripsi". Embedding fakta di-cache per teks, jadi query
-berikutnya pada node yang sama hampir gratis.
+user dan teks fakta "source relation target — deskripsi". Meng-embed fakta mahal (bge-m3 568M parameter:
+~25 ms/fakta di GTX 1650, ~80 ms di CPU; node GPT-4o punya 301 fakta), jadi embedding fakta di-cache per
+teks di memori DAN di disk (FACT_EMBEDDINGS_PATH): tiap fakta dihitung sekali, restart tetap cepat.
+Cache dialamatkan oleh teks dan hanya dipakai bila model/revisi/panjang-seq sama, jadi aman lintas korpus.
 
 Aturan (diuji di tests/test_graph_rerank.py):
   - jatah hop-1 tetap <= 60% budget (sama dengan traverse()), sisanya untuk hop-2;
@@ -15,11 +17,16 @@ Aturan (diuji di tests/test_graph_rerank.py):
     mempertahankan urutan list, jadi format dan prompt jawaban tidak berubah. Node di bawah budget
     tidak kehilangan fakta apa pun; hanya urutannya yang berubah.
 """
-from typing import Any, Dict, List
+import os
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 
+from src.config import EMBEDDING_MAX_SEQ_LENGTH, EMBEDDING_MODEL_NAME, EMBEDDING_MODEL_REVISION
+from src.security.integrity import atomic_write
+
 HOP1_SHARE = 0.6  # sama dengan hop1_cap di GraphTraversal.traverse
+_CACHE_MODEL_ID = f"{EMBEDDING_MODEL_NAME}@{EMBEDDING_MODEL_REVISION}/seq{EMBEDDING_MAX_SEQ_LENGTH}"
 
 
 def fact_text(rel: Dict[str, Any]) -> str:
@@ -27,17 +34,50 @@ def fact_text(rel: Dict[str, Any]) -> str:
     return f"{text} — {rel['description']}" if rel.get("description") else text
 
 
+def load_fact_cache(path: str) -> Dict[str, np.ndarray]:
+    """{teks fakta: vektor} dari disk; {} bila tidak ada, rusak, atau dibuat oleh model lain."""
+    if not path or not os.path.exists(path):
+        return {}
+    try:
+        with np.load(path, allow_pickle=False) as data:
+            if str(data["model"]) != _CACHE_MODEL_ID:
+                return {}
+            return {str(t): v for t, v in zip(data["texts"], data["vectors"].astype(np.float32))}
+    except Exception as e:  # file rusak: hitung ulang saja, jangan gagalkan query
+        print(f"[Rerank] Cache embedding fakta diabaikan ({e})")
+        return {}
+
+
+def save_fact_cache(path: str, cache: Dict[str, np.ndarray]) -> None:
+    texts = list(cache)
+
+    def _write(tmp: str) -> None:
+        with open(tmp, "wb") as f:  # objek file: np.savez menambah ".npz" pada nama file tanpa ekstensi itu
+            np.savez(f, model=np.array(_CACHE_MODEL_ID), texts=np.array(texts),
+                     vectors=np.stack([cache[t] for t in texts]))
+
+    atomic_write(path, _write)
+
+
 class GraphFactReranker:
-    def __init__(self, embed_client):
+    def __init__(self, embed_client, cache_path: Optional[str] = None):
         self.embed = embed_client
-        self._cache: Dict[str, np.ndarray] = {}
+        self.cache_path = cache_path
+        self._cache: Optional[Dict[str, np.ndarray]] = None  # dimuat dari disk saat pertama dipakai
 
     def score(self, query: str, rels: List[Dict[str, Any]]) -> List[float]:
+        if self._cache is None:
+            self._cache = load_fact_cache(self.cache_path)
         texts = [fact_text(r) for r in rels]
         missing = [t for t in dict.fromkeys(texts) if t not in self._cache]
         if missing:
             for t, vec in zip(missing, self.embed.embed_batch(missing)):
                 self._cache[t] = np.asarray(vec, dtype=np.float32)
+            if self.cache_path:
+                try:
+                    save_fact_cache(self.cache_path, self._cache)
+                except OSError as e:  # disk penuh / read-only: tetap jalan dengan cache di memori
+                    print(f"[Rerank] Cache embedding fakta tidak tersimpan ({e})")
         q = np.asarray(self.embed.embed_text(query), dtype=np.float32)
         return [float(np.dot(q, self._cache[t])) for t in texts]
 
