@@ -1,6 +1,6 @@
 [
-  {"id": "count-method",        "q": "Metode apa yang paling banyak dipakai di seluruh paper?",     "category": "counting",   "intent": "counting",   "target_type": "Method",  "expected_contains": ["synthetic data finetuning"]},
-  {"id": "count-method2",       "q": "Teknik mitigasi apa yang paling banyak terhubung?",           "category": "counting",   "intent": "counting",   "target_type": "Method",  "expected_contains": ["activation steering"]},
+  {"id": "count-method",        "q": "Metode apa yang paling banyak dipakai di seluruh paper?",     "category": "counting",   "intent": "counting",   "target_type": "Method",  "expected_contains": ["Beacon"]},
+  {"id": "count-method2",       "q": "Teknik mitigasi apa yang paling banyak terhubung?",           "category": "counting",   "intent": "counting",   "target_type": "Method",  "expected_contains": ["Mean-Difference Steering"]},
   {"id": "count-dataset",       "q": "Dataset apa yang paling sering dipakai?",                     "category": "counting",   "intent": "counting",   "target_type": "Dataset", "expected_contains": ["hh-rlhf"]},
   {"id": "count-metric",        "q": "Metrik evaluasi apa yang paling umum dipakai?",               "category": "counting",   "intent": "counting",   "target_type": "Metric",  "expected_contains": ["sycophancy metric"]},
   {"id": "count-author",        "q": "Penulis siapa yang paling banyak terhubung?",                 "category": "counting",   "intent": "counting",   "target_type": "Author",  "expected_contains": ["Myra Cheng"]},
