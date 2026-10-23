@@ -39,8 +39,9 @@ _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 def _valid_name(name: str) -> bool:
     return bool(_NAME_RE.match(name)) and ".." not in name
 # extraction_cache.json: hasil LLM per chunk; dengan arsip ini korpus hasil restore bisa di-build tanpa
-# mengekstrak ulang.
-OPTIONAL = ["graph_visualization.html", "extraction_cache.json"]
+# mengekstrak ulang. fact_embeddings.npz: cache embedding fakta untuk rerank graph; tanpa dia korpus hasil
+# restore tetap benar, hanya query pertama per node yang lambat.
+OPTIONAL = ["graph_visualization.html", "extraction_cache.json", "fact_embeddings.npz"]
 # Sengaja TIDAK di-backup: similarity_debug*.csv (log diagnostik, besar, tidak dipakai runtime)
 
 
