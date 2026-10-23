@@ -30,6 +30,15 @@ _STOPWORDS = {
 
 _WORD_RE = re.compile(r"\w+", re.UNICODE)
 
+
+def _contains_term(term: str, text: str) -> bool:
+    """`term` muncul utuh di `text`. Tanda hubung dihitung bagian kata, jadi node "RLHF" TIDAK cocok
+    dengan "hh-rlhf" dan "GPT" tidak cocok dengan "GPT-4o" (sebelumnya "-" dianggap batas kata)."""
+    return re.search(_TERM_LEFT + re.escape(term) + _TERM_RIGHT, text) is not None
+
+
+_TERM_LEFT, _TERM_RIGHT = r"(?<![\w-])", r"(?![\w-])"
+
 # Kata umum di judul paper yang tidak membedakan apa pun — dibuang saat menghitung
 # tumpang-tindih judul (roadmap 1.5).
 _TITLE_STOP = {
@@ -71,7 +80,7 @@ class QueryResolver:
         ctx = (context_query or query).lower()
         if self.model_to_paper and any(w in ctx for w in _PAPER_CONTEXT):
             for model_lower, paper_title in self.model_to_paper.items():
-                if re.search(r"(?<!\w)" + re.escape(model_lower) + r"(?!\w)", ctx):
+                if _contains_term(model_lower, ctx):
                     for node in nodes:
                         if node.lower() == paper_title.lower():
                             print(f"Resolved (paper-context) '{query}' -> '{node}'")
@@ -97,7 +106,7 @@ class QueryResolver:
             nl = node.lower()
             if len(nl) < 3:
                 continue
-            if re.search(r"(?<!\w)" + re.escape(nl) + r"(?!\w)", ql):
+            if _contains_term(nl, ql):
                 if best_contained is None or len(nl) > len(best_contained.lower()):
                     best_contained = node
         if best_contained:
@@ -144,7 +153,7 @@ class QueryResolver:
             nl = node.lower()
             if len(nl) < 3:
                 continue
-            for m in re.finditer(r"(?<!\w)" + re.escape(nl) + r"(?!\w)", ql):
+            for m in re.finditer(_TERM_LEFT + re.escape(nl) + _TERM_RIGHT, ql):
                 spans.append((len(nl), m.start(), m.end(), node))
         spans.sort(reverse=True)  # terpanjang menang
 
