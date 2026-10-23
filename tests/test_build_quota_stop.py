@@ -98,6 +98,9 @@ class _FakeAnalytics:
     def detect_communities(self):
         return [{"community_id": 0, "nodes": ["Stochastic Gradient Descent", "MedQuad"]}]
 
+    def community_context(self, nodes):
+        return ", ".join(nodes)
+
 
 @pytest.fixture
 def env(tmp_path, monkeypatch):

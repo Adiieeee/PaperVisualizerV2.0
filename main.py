@@ -13,7 +13,9 @@ from src.graph.builder import GraphBuilder
 from src.graph.analytics import GraphAnalytics
 from src.vectorstore.chromadb_store import ChromaStore
 from src.engine import GraphRAGEngine
-from src.config import ExtractedKnowledge, LLMExtractedKnowledge, load_paper_metadata, save_paper_metadata
+from src.config import (
+    COMMUNITY_MIN_SIZE, ExtractedKnowledge, LLMExtractedKnowledge, load_paper_metadata, save_paper_metadata,
+)
 from src.security.integrity import (
     ArtifactIntegrityError, atomic_write_json, build_manifest, chroma_stats, write_manifest,
 )
@@ -272,24 +274,26 @@ def build_pipeline(reextract: bool = False):
     analytics = GraphAnalytics(graph_builder.graph)
     print("Detecting communities...")
     communities = analytics.detect_communities()
-    
+    covered = sum(len(c['nodes']) for c in communities)
+    print(f"{len(communities)} communities (>= {COMMUNITY_MIN_SIZE} nodes) covering {covered} nodes; "
+          "the rest are outliers.")
+
     summaries = []
     for c in communities:
-        if len(c['nodes']) > 1:
-            print(f"Summarizing community {c['community_id']} ({len(c['nodes'])} nodes)...")
-            comm_text = ", ".join(c['nodes'])
-            try:
-                summary = llm.summarize_community(comm_text)
-                summaries.append({
-                    "community_id": c['community_id'],
-                    "summary": summary
-                })
-            except DailyQuotaExceededError as e:
-                # Gemini DAN Groq habis: berhenti, jangan selesaikan build dengan ringkasan bolong.
-                _stop_for_quota("community summarization", e)
-                return
-            except Exception as e:
-                print(f"[Warning] Skipped community {c['community_id']} summarization: {e}")
+        print(f"Summarizing community {c['community_id']} ({len(c['nodes'])} nodes)...")
+        comm_text = analytics.community_context(c['nodes'])
+        try:
+            summary = llm.summarize_community(comm_text)
+            summaries.append({
+                "community_id": c['community_id'],
+                "summary": summary
+            })
+        except DailyQuotaExceededError as e:
+            # Gemini DAN Groq habis: berhenti, jangan selesaikan build dengan ringkasan bolong.
+            _stop_for_quota("community summarization", e)
+            return
+        except Exception as e:
+            print(f"[Warning] Skipped community {c['community_id']} summarization: {e}")
 
     # Disimpan SETELAH tahap yang bisa berhenti karena kuota: berhenti di tengah tidak boleh
     # meninggalkan graph.graphml baru di samping chroma_db/manifest lama (engine menolak start).
@@ -303,11 +307,10 @@ def build_pipeline(reextract: bool = False):
     chunk_embs = embed.embed_batch(chunk_texts)
     chroma.add_chunks(chunks, chunk_embs)
     
-    if summaries:
-        print("Embedding and storing community summaries...")
-        summary_texts = [s["summary"] for s in summaries]
-        summary_embs = embed.embed_batch(summary_texts)
-        chroma.add_community_summaries(summaries, summary_embs)
+    # Selalu dipanggil (juga bila kosong): koleksi diganti seluruhnya, ringkasan build lama tak tersisa.
+    print("Embedding and storing community summaries...")
+    summary_embs = embed.embed_batch([s["summary"] for s in summaries]) if summaries else []
+    chroma.add_community_summaries(summaries, summary_embs)
 
     # 7.5 Integrity manifest (embedding model + revision, graph SHA-256/counts, Chroma counts).
     #     The engine verifies it at startup. A failure here must not discard a completed build.
