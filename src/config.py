@@ -51,6 +51,13 @@ DEDUP_SIMILARITY_THRESHOLD = 0.75
 # bge-m3: parafrase Indonesia yang benar >= 0.638, salah cocok teramati <= 0.600 (jarak tipis; cek ulang
 # dengan evaluate.py setelah build). Dulu 0.72 untuk bge-small-en-v1.5.
 RESOLVER_SIM_THRESHOLD = 0.62
+# Jalur vektor (fallback chunk + thematic): hasil di bawah ambang dibuang; bila semuanya gugur, engine
+# menolak tanpa panggilan LLM. bge-m3 (kalibrasi 2026-10-23, cosine top-1): fallback relevan >= 0.563,
+# luar domain jelas <= 0.466 (kopi, cuaca, terjemahan); ResNet/ImageNet 0.529 sengaja lolos (ditolak oleh
+# aturan prompt jawaban). Ringkasan komunitas: tema >= 0.557, luar domain <= 0.405.
+# Lihat scripts/calibrate_retrieval.py.
+CHUNK_MIN_SIMILARITY = 0.50
+COMMUNITY_MIN_SIMILARITY = 0.50
 
 # --- Community (graph-only; tidak menyentuh vector store chunk) ---
 # Louvain dijalankan atas graf ko-okurensi: dua entitas terhubung bila disebut di chunk yang sama.

@@ -9,6 +9,24 @@ from src.query.resolver import QueryResolver
 from src.query.traversal import GraphTraversal
 from src.graph.analytics import GraphAnalytics
 from src.security.integrity import check_artifacts
+from src.config import load_paper_metadata
+
+# Jawaban tetap (tanpa panggilan LLM) bila pencarian vektor tidak menemukan apa pun di atas ambang
+# relevansi. Dwibahasa karena bahasa pertanyaan tidak dideteksi; frasanya dikenali evaluate.REFUSAL.
+NO_CONTEXT_MESSAGE = (
+    "Maaf, tidak ada informasi tentang hal itu di dokumen yang tersedia. / "
+    "Sorry, there is no information about this in the provided documents."
+)
+
+
+def format_chunk(i: int, hit: dict, paper_titles: dict) -> str:
+    """`[i] (Sumber: <judul paper>) <teks>`; judul dari paper_metadata.json, fallback ke nama file PDF.
+    Judul adalah keluaran LLM atas PDF: ikut dinetralkan bersama blok konteksnya di build_answer_prompt."""
+    doc_id = hit.get("doc_id")
+    if not doc_id:
+        return f"[{i}] {hit['text']}"
+    return f"[{i}] (Sumber: {paper_titles.get(doc_id) or doc_id}) {hit['text']}"
+
 
 class GraphRAGEngine:
     def __init__(self, graph_path: str = "data/processed/graph.graphml"):
@@ -28,6 +46,7 @@ class GraphRAGEngine:
         self.resolver = QueryResolver(self.embed, self.chroma, self.graph)
         self.traversal = GraphTraversal(self.graph)
         self.analytics = GraphAnalytics(self.graph)
+        self.paper_titles = {doc: m.get("title") for doc, m in load_paper_metadata().items()}
 
     def query(self, user_query: str) -> str:
         """
@@ -59,6 +78,9 @@ class GraphRAGEngine:
             kind = KIND_COMMUNITY
             search_q = routing.search_query or user_query
             summaries = self.resolver.search_communities(search_q)
+            if not summaries:
+                print("[3] No community summary above the relevance threshold")
+                return NO_CONTEXT_MESSAGE
             context_parts.append("Thematic Community Context:")
             for i, s in enumerate(summaries):
                 context_parts.append(f"[{i+1}] {s}")
@@ -95,9 +117,12 @@ class GraphRAGEngine:
                 print("[3] Node not found, falling back to Chunk search")
                 kind = KIND_TEXT
                 chunks = self.resolver.search_chunks(search_q)
+                if not chunks:
+                    print("[4] No chunk above the relevance threshold")
+                    return NO_CONTEXT_MESSAGE
                 context_parts.append("Raw Text Chunks Context:")
                 for i, c in enumerate(chunks):
-                    context_parts.append(f"[{i+1}] {c}")
+                    context_parts.append(format_chunk(i + 1, c, self.paper_titles))
 
         # Assemble Context
         assembled_context = "\n\n".join(context_parts)

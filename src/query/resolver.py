@@ -5,7 +5,9 @@ import re
 
 from src.llm.embedding import EmbeddingClient
 from src.vectorstore.chromadb_store import ChromaStore
-from src.config import RESOLVER_SIM_THRESHOLD, load_model_to_paper
+from src.config import (
+    CHUNK_MIN_SIMILARITY, COMMUNITY_MIN_SIMILARITY, RESOLVER_SIM_THRESHOLD, load_model_to_paper,
+)
 
 # Query words that signal the user wants the PAPER (not the model node): authors, affiliation,
 # findings, etc. In that case a model name like "VGG" should resolve to its Paper node.
@@ -235,18 +237,34 @@ class QueryResolver:
             print(f"[Resolver] embedding resolution failed: {e}")
         return None
 
-    def search_chunks(self, query: str, top_k: int = 5) -> List[str]:
-        """Vector search on raw chunks as a fallback."""
+    def search_chunks(self, query: str, top_k: int = 5) -> List[dict]:
+        """Vector search on raw chunks as a fallback: [{text, doc_id, score}] above CHUNK_MIN_SIMILARITY."""
         emb = self.embed.embed_text(query)
-        results = self.chroma.search_chunks(emb, n_results=top_k)
-        if not results['documents'] or not results['documents'][0]:
-            return []
-        return results['documents'][0]
+        return relevant_hits(self.chroma.search_chunks(emb, n_results=top_k), CHUNK_MIN_SIMILARITY)
 
     def search_communities(self, query: str, top_k: int = 3) -> List[str]:
-        """Vector search on community summaries for thematic queries."""
+        """Vector search on community summaries for thematic queries (above COMMUNITY_MIN_SIMILARITY)."""
         emb = self.embed.embed_text(query)
-        results = self.chroma.search_communities(emb, n_results=top_k)
-        if not results['documents'] or not results['documents'][0]:
-            return []
-        return results['documents'][0]
+        hits = relevant_hits(self.chroma.search_communities(emb, n_results=top_k), COMMUNITY_MIN_SIMILARITY)
+        return [h["text"] for h in hits]
+
+
+def l2_to_cosine(distance: float) -> float:
+    """Koleksi Chroma dibuat tanpa `hnsw:space`, jadi jaraknya L2 kuadrat. Untuk vektor ternormalisasi
+    (bge-m3, normalize_embeddings=True) d = 2 - 2*cos, sehingga cos = 1 - d/2."""
+    return 1.0 - distance / 2.0
+
+
+def relevant_hits(results: dict, min_similarity: float) -> List[dict]:
+    """Hasil query Chroma -> [{text, doc_id, score}] dengan cosine >= min_similarity (urutan Chroma dipertahankan).
+    ChromaDB selalu mengembalikan top-k, walaupun semuanya jauh dari pertanyaan."""
+    docs = (results.get("documents") or [[]])[0] or []
+    dists = (results.get("distances") or [[]])[0] or []
+    metas = (results.get("metadatas") or [[]])[0] or []
+    hits = []
+    for i, (text, dist) in enumerate(zip(docs, dists)):
+        score = l2_to_cosine(dist)
+        if score >= min_similarity:
+            meta = metas[i] if i < len(metas) and metas[i] else {}
+            hits.append({"text": text, "doc_id": meta.get("doc_id"), "score": score})
+    return hits

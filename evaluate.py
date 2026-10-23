@@ -55,7 +55,7 @@ def retrieval_context(case, resolver, traversal, analytics):
             for n in nodes
         )
         return text, nodes[0]
-    return " ".join(resolver.search_chunks(case["q"])), None  # local vector fallback
+    return " ".join(h["text"] for h in resolver.search_chunks(case["q"])), None  # local vector fallback
 
 
 def grade(case, text, node):

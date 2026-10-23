@@ -7,7 +7,7 @@ import types
 import pytest
 
 from src.config import QueryRouting
-from src.engine import GraphRAGEngine
+from src.engine import NO_CONTEXT_MESSAGE, GraphRAGEngine, format_chunk
 from src.llm.prompts import KIND_COMMUNITY, KIND_GRAPH, KIND_TEXT
 
 
@@ -27,6 +27,7 @@ def _engine(routing, **parts):
     e.resolver = parts.get("resolver")
     e.traversal = parts.get("traversal")
     e.analytics = parts.get("analytics")
+    e.paper_titles = parts.get("paper_titles", {})
     return e
 
 
@@ -75,12 +76,43 @@ def test_entity_found_is_graph_context():
 def test_entity_not_found_falls_back_to_raw_text_context():
     rs = types.SimpleNamespace(
         resolve_entities=lambda q, context_query=None: [],
-        search_chunks=lambda q: ["potongan teks PDF"],
+        search_chunks=lambda q: [{"text": "potongan teks PDF", "doc_id": "a.pdf", "score": 0.7}],
     )
-    e = _engine(QueryRouting(intent="entity", search_query="x"), resolver=rs)
+    e = _engine(QueryRouting(intent="entity", search_query="x"), resolver=rs,
+                paper_titles={"a.pdf": "Judul Paper A"})
     e.query("x?")
     kind, text = _only_block(e)
-    assert kind == KIND_TEXT and "potongan teks PDF" in text
+    assert kind == KIND_TEXT and "[1] (Sumber: Judul Paper A) potongan teks PDF" in text
+
+
+def test_no_relevant_chunk_refuses_without_llm_call():
+    rs = types.SimpleNamespace(resolve_entities=lambda q, context_query=None: [], search_chunks=lambda q: [])
+    e = _engine(QueryRouting(intent="entity", search_query="kopi"), resolver=rs)
+    assert e.query("cara membuat kopi?") == NO_CONTEXT_MESSAGE
+    assert e.llm.calls == []
+
+
+def test_no_relevant_community_refuses_without_llm_call():
+    rs = types.SimpleNamespace(search_communities=lambda q: [])
+    e = _engine(QueryRouting(intent="thematic", search_query="resep"), resolver=rs)
+    assert e.query("tren resep?") == NO_CONTEXT_MESSAGE
+    assert e.llm.calls == []
+
+
+@pytest.mark.parametrize("hit, titles, expected", [
+    ({"text": "t", "doc_id": "a.pdf"}, {"a.pdf": "Judul"}, "[2] (Sumber: Judul) t"),
+    ({"text": "t", "doc_id": "a.pdf"}, {}, "[2] (Sumber: a.pdf) t"),             # judul belum ada
+    ({"text": "t", "doc_id": "a.pdf"}, {"a.pdf": None}, "[2] (Sumber: a.pdf) t"),
+    ({"text": "t", "doc_id": None}, {}, "[2] t"),                                 # tanpa metadata
+])
+def test_format_chunk_labels_source(hit, titles, expected):
+    assert format_chunk(2, hit, titles) == expected
+
+
+def test_no_context_message_counts_as_refusal_in_eval():
+    from evaluate import REFUSAL
+    msg = NO_CONTEXT_MESSAGE.lower()
+    assert any(p in msg for p in REFUSAL)
 
 
 def test_traversal_limits_are_server_constants_not_router_output():
