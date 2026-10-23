@@ -169,42 +169,23 @@ def test_unreadable_manifest_is_a_clear_error(art):
         I.check_artifacts(art.graph_path, art.G, art.chroma, FakeEmbed(), art.manifest_path)
 
 
-# --- checkpoint ekstraksi korup: berhenti dengan pesan jelas, jangan diam-diam mulai ulang ---------------------
+# --- arsip ekstraksi korup: berhenti dengan pesan jelas, jangan diam-diam mulai ulang -------------------------
 
-def test_corrupt_extraction_checkpoint_raises_clear_error(tmp_path, monkeypatch):
+def test_corrupt_extraction_archive_raises_clear_error(tmp_path, monkeypatch):
     import main
-    bad = tmp_path / "checkpoint_extraction.json"
-    bad.write_text('{"done_chunk_ids": ["a"], "knowledge": [{"chunk_id": ', encoding="utf-8")  # terpotong
-    monkeypatch.setattr(main, "CHECKPOINT_PATH", str(bad))
+    bad = tmp_path / "extraction_cache.json"
+    bad.write_text('{"version": 1, "fingerprint": "x", "chunks": {"a": ', encoding="utf-8")  # terpotong
+    monkeypatch.setattr(main, "EXTRACTION_CACHE_PATH", str(bad))
     with pytest.raises(I.ArtifactIntegrityError, match="corrupt"):
-        main._load_checkpoint()
+        main._load_extraction_cache("x")
 
 
-def test_extraction_checkpoint_roundtrip_is_atomic(tmp_path, monkeypatch):
+def test_extraction_archive_roundtrip_is_atomic(tmp_path, monkeypatch):
     import main
-    from src.config import Entity, ExtractedKnowledge
-    p = tmp_path / "checkpoint_extraction.json"
-    monkeypatch.setattr(main, "CHECKPOINT_PATH", str(p))
-    k = ExtractedKnowledge(entities=[Entity(name="ResNet", type="Method")], relationships=[])
-    main._save_checkpoint({"c0"}, [("c0", k)])
-    done, items = main._load_checkpoint()
-    assert done == {"c0"} and items[0][0] == "c0" and items[0][1].entities[0].name == "ResNet"
+    p = tmp_path / "extraction_cache.json"
+    monkeypatch.setattr(main, "EXTRACTION_CACHE_PATH", str(p))
+    entry = {"text_sha256": "h", "status": "ok", "model": "gemini-3.5-flash-lite", "attempts": 1,
+             "dropped": 0, "data": {"entities": [{"name": "ResNet", "type": "Method"}], "relationships": []}}
+    main._save_extraction_cache("fp", {"c0": entry})
+    assert main._load_extraction_cache("fp") == {"c0": entry}
     assert not os.path.exists(str(p) + ".tmp")
-
-
-def test_extraction_checkpoint_keeps_answering_model_per_chunk(tmp_path, monkeypatch):
-    import main
-    from src.config import ExtractedKnowledge
-    p = tmp_path / "checkpoint_extraction.json"
-    monkeypatch.setattr(main, "CHECKPOINT_PATH", str(p))
-    k = ExtractedKnowledge()
-    models = {"c0": "gemini-3.5-flash-lite", "c1": "openai/gpt-oss-120b"}
-    main._save_checkpoint({"c0", "c1"}, [("c0", k), ("c1", k)], models)
-    assert main._load_chunk_models() == models
-    assert len(main._load_checkpoint()[1]) == 2
-
-    # checkpoint lama (sebelum model dicatat) tetap bisa di-resume; mapping-nya kosong
-    p.write_text('{"done_chunk_ids": ["c0"], "knowledge": [{"chunk_id": "c0", "data": '
-                 '{"entities": [], "relationships": []}}]}', encoding="utf-8")
-    assert main._load_chunk_models() == {}
-    assert main._load_checkpoint()[0] == {"c0"}

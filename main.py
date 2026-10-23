@@ -1,9 +1,11 @@
 import argparse
+import hashlib
 import os
 import json
+from collections import Counter
 
 from src.ingestion.document import DocumentProcessor
-from src.llm.llm_service import LLMService, DailyQuotaExceededError
+from src.llm.llm_service import LLMService, DailyQuotaExceededError, build_extraction_prompt
 from src.llm.embedding import EmbeddingClient
 from src.extraction.cleaner import clean_knowledge_list, preprocess_authors
 from src.extraction.deduplicator import HybridDeduplicator, extract_acronyms_from_texts, register_acronyms
@@ -11,7 +13,7 @@ from src.graph.builder import GraphBuilder
 from src.graph.analytics import GraphAnalytics
 from src.vectorstore.chromadb_store import ChromaStore
 from src.engine import GraphRAGEngine
-from src.config import ExtractedKnowledge, load_paper_metadata, save_paper_metadata
+from src.config import ExtractedKnowledge, LLMExtractedKnowledge, load_paper_metadata, save_paper_metadata
 from src.security.integrity import (
     ArtifactIntegrityError, atomic_write_json, build_manifest, chroma_stats, write_manifest,
 )
@@ -19,47 +21,63 @@ from src.security.integrity import (
 # ──────────────────────────────────────────
 # Checkpoint helpers
 # ──────────────────────────────────────────
-CHECKPOINT_PATH = "data/processed/checkpoint_extraction.json"
-# Model yang mengekstrak tiap chunk (Gemini, atau Groq saat kuota harian Gemini habis). Checkpoint
-# dihapus setelah build sukses, jadi mapping ini juga ditulis permanen untuk audit/proses ulang.
-EXTRACTION_MODELS_PATH = "data/processed/extraction_models.json"
+# Arsip ekstraksi = checkpoint ekstraksi yang TIDAK dihapus setelah build: hasil LLM per chunk
+# (+ status ok/retried/salvaged/failed, model, hash teks). Ekstraksi adalah tahap termahal dan tidak
+# deterministik; arsip memungkinkan audit dan build ulang tanpa mengekstrak ulang (reset-index
+# mempertahankannya). Dipakai ulang hanya bila teks chunk DAN sidik jari prompt/skema sama.
+EXTRACTION_CACHE_PATH = "data/processed/extraction_cache.json"
+EXTRACTION_CACHE_VERSION = 1
 
-def _save_checkpoint(done_chunk_ids: set, knowledge_items: list, chunk_models: dict = None):
-    """
-    Save progress to disk. knowledge_items is a list of (chunk_id, ExtractedKnowledge).
-    The chunk_id is persisted per item so provenance survives a resume (Phase A) —
-    Pydantic private attrs are dropped by model_dump(), so we track it at the item level.
-    chunk_models: {chunk_id: model yang menjawab}; dibaca lagi lewat _load_chunk_models().
-    """
-    payload = {
-        "done_chunk_ids": list(done_chunk_ids),
-        "knowledge": [{"chunk_id": cid, "data": k.model_dump()} for cid, k in knowledge_items],
-        "models": chunk_models or {},
-    }
-    # Atomic (temp file + os.replace): this file holds costly LLM output; a crash mid-write must
-    # never leave truncated JSON that makes the build impossible to resume.
-    atomic_write_json(CHECKPOINT_PATH, payload, indent=2)
 
-def _load_checkpoint():
-    """Load checkpoint if present. Returns (done_chunk_ids, knowledge_items) where each
-    item is (chunk_id, ExtractedKnowledge). Tolerant of the old format (no chunk_id)."""
-    if not os.path.exists(CHECKPOINT_PATH):
-        return set(), []
+def extraction_fingerprint() -> str:
+    """Berubah bila prompt ekstraksi atau skema yang dikirim ke LLM berubah."""
+    blob = build_extraction_prompt("", None) + json.dumps(LLMExtractedKnowledge.model_json_schema(), sort_keys=True)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
+
+
+def _text_sha256(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _load_extraction_cache(fingerprint: str) -> dict:
+    """{chunk_id: entry} yang dibuat dengan prompt/skema sekarang; {} bila belum ada atau usang."""
+    if not os.path.exists(EXTRACTION_CACHE_PATH):
+        return {}
     try:
-        with open(CHECKPOINT_PATH, "r", encoding="utf-8") as f:
+        with open(EXTRACTION_CACHE_PATH, "r", encoding="utf-8") as f:
             payload = json.load(f)
     except ValueError as e:  # corrupt JSON: do NOT silently restart and burn the quota again
         raise ArtifactIntegrityError(
-            f"{CHECKPOINT_PATH} is corrupt ({e}). Fix it by hand, or move it aside "
-            f"(e.g. rename to .corrupt) to re-extract from scratch."
+            f"{EXTRACTION_CACHE_PATH} is corrupt ({e}). Fix it by hand, move it aside, or run "
+            f"'python main.py build --reextract' to extract every chunk again."
         ) from e
-    items = []
-    for entry in payload["knowledge"]:
-        if isinstance(entry, dict) and "data" in entry:  # v2 format
-            items.append((entry.get("chunk_id"), ExtractedKnowledge.model_validate(entry["data"])))
-        else:  # legacy format: a bare knowledge dict, no chunk_id
-            items.append((None, ExtractedKnowledge.model_validate(entry)))
-    return set(payload["done_chunk_ids"]), items
+    if payload.get("version") != EXTRACTION_CACHE_VERSION or payload.get("fingerprint") != fingerprint:
+        print("[Extract] Arsip ekstraksi dibuat dengan prompt/skema lain: semua chunk diekstrak ulang.")
+        return {}
+    return payload.get("chunks", {})
+
+
+def _save_extraction_cache(fingerprint: str, entries: dict):
+    # Atomic (temp file + os.replace): this file holds costly LLM output; a crash mid-write must
+    # never leave truncated JSON that makes the build impossible to resume.
+    atomic_write_json(EXTRACTION_CACHE_PATH, {
+        "version": EXTRACTION_CACHE_VERSION, "fingerprint": fingerprint, "chunks": entries,
+    }, indent=1)
+
+
+def _reusable(entry, text: str) -> bool:
+    return bool(entry) and entry.get("status") != "failed" and entry.get("text_sha256") == _text_sha256(text)
+
+
+def _print_extraction_summary(entries: dict):
+    by_status, by_model = Counter(), Counter()
+    for e in entries.values():
+        by_status[e["status"]] += 1
+        by_model[e.get("model") or "?"] += 1
+    print(f"[Extract] Status: {dict(by_status)} | model: {dict(by_model)}  (detail: {EXTRACTION_CACHE_PATH})")
+    salvaged = {cid: e["dropped"] for cid, e in entries.items() if e["status"] == "salvaged"}
+    if salvaged:
+        print(f"[Extract] Diselamatkan sebagian (item dibuang): {salvaged}")
 
 def _vector_store_mismatch(chroma, embed):
     """Pesan error bila ChromaDB berisi vektor berdimensi lain dari model embedding sekarang, else None."""
@@ -75,20 +93,11 @@ def _vector_store_mismatch(chroma, embed):
 
 
 def _stop_for_quota(stage: str, exc: Exception):
-    """Kuota harian habis setelah dedup. Checkpoint ekstraksi + dedup masih ada, jadi re-run
+    """Kuota harian habis setelah dedup. Arsip ekstraksi + checkpoint dedup masih ada, jadi re-run
     setelah reset melewati keduanya dan mengulang hanya tahap graph/komunitas."""
     print(f"\n[Build] Stopped during {stage}: {exc}")
-    print("[Checkpoint] Extraction + dedup checkpoints kept; re-run 'python main.py build' after the "
+    print("[Checkpoint] Extraction archive + dedup checkpoint kept; re-run 'python main.py build' after the "
           "quota resets (graph, family merge and community summaries are redone).")
-
-
-def _load_chunk_models() -> dict:
-    """{chunk_id: model} dari checkpoint (kosong untuk checkpoint lama yang belum mencatatnya).
-    Dipanggil setelah _load_checkpoint, yang sudah menolak JSON korup."""
-    if not os.path.exists(CHECKPOINT_PATH):
-        return {}
-    with open(CHECKPOINT_PATH, "r", encoding="utf-8") as f:
-        return json.load(f).get("models", {})
 
 
 # ──────────────────────────────────────────
@@ -112,7 +121,7 @@ def _generate_visualization(graph, output_path: str = "data/processed/graph_visu
 # ──────────────────────────────────────────
 # Build Pipeline
 # ──────────────────────────────────────────
-def build_pipeline():
+def build_pipeline(reextract: bool = False):
     print("=== Starting Build Pipeline ===")
     
     # 1. Ingestion
@@ -157,44 +166,52 @@ def build_pipeline():
     # 2b. Auto-extend the acronym dictionary from each paper's own "Full Name (ACR)" definitions.
     register_acronyms(extract_acronyms_from_texts([c["text"] for c in chunks]))
 
-    # ── Checkpoint: load progress ──
-    # knowledge_items: list of (chunk_id, ExtractedKnowledge) — chunk_id carries provenance.
-    try:
-        done_chunk_ids, knowledge_items = _load_checkpoint()
-    except ArtifactIntegrityError as e:
-        print(f"\n[ERROR] {e}")
-        return
-    chunk_models = _load_chunk_models()
-    if done_chunk_ids:
-        print(f"[Checkpoint] Resuming. {len(done_chunk_ids)}/{len(chunks)} chunks already done.")
+    # ── Extraction archive: reuse valid results, extract the rest ──
+    fingerprint = extraction_fingerprint()
+    if reextract:
+        print("[Extract] --reextract: arsip lama diabaikan; semua chunk diekstrak ulang.")
+        cache = {}
+    else:
+        try:
+            cache = _load_extraction_cache(fingerprint)
+        except ArtifactIntegrityError as e:
+            print(f"\n[ERROR] {e}")
+            return
+    current_ids = {c["chunk_id"] for c in chunks}
+    cache = {cid: e for cid, e in cache.items() if cid in current_ids}
 
-    # 3. Extraction (with per-chunk checkpoint saves)
-    pending_chunks = [c for c in chunks if c["chunk_id"] not in done_chunk_ids]
-    print(f"Remaining chunks to extract: {len(pending_chunks)}")
+    # 3. Extraction (archive saved after every chunk)
+    pending_chunks = [c for c in chunks if not _reusable(cache.get(c["chunk_id"]), c["text"])]
+    print(f"[Extract] {len(chunks) - len(pending_chunks)}/{len(chunks)} chunk dipakai ulang dari arsip; "
+          f"{len(pending_chunks)} diekstrak.")
 
-    initial_done_count = len(done_chunk_ids)
-    for i, chunk in enumerate(pending_chunks):
-        global_idx = initial_done_count + i + 1
-        print(f"Extracting knowledge from chunk {global_idx}/{len(chunks)} ({chunk['chunk_id']})...")
+    for i, chunk in enumerate(pending_chunks, 1):
+        print(f"Extracting knowledge from chunk {i}/{len(pending_chunks)} ({chunk['chunk_id']})...")
         try:
             paper_title = paper_metadata.get(chunk["doc_id"], {}).get("title")  # B1: title injection
-            knowledge = llm.extract_entities(chunk["text"], paper_title=paper_title).knowledge
-            knowledge_items.append((chunk["chunk_id"], knowledge))
-            done_chunk_ids.add(chunk["chunk_id"])
-            chunk_models[chunk["chunk_id"]] = llm.last_model
-            # Save checkpoint after EVERY successful extraction
-            _save_checkpoint(done_chunk_ids, knowledge_items, chunk_models)
+            result = llm.extract_entities(chunk["text"], paper_title=paper_title)
         except Exception as e:
             print(f"\n[ERROR] Failed on chunk {chunk['chunk_id']}: {e}")
             print("[Checkpoint] Progress saved. Re-run 'python main.py build' to resume.\n")
             return
+        cache[chunk["chunk_id"]] = {
+            "text_sha256": _text_sha256(chunk["text"]), "status": result.status, "model": llm.last_model,
+            "attempts": result.attempts, "dropped": result.dropped, "data": result.knowledge.model_dump(),
+        }
+        _save_extraction_cache(fingerprint, cache)
 
+    _print_extraction_summary(cache)
+    failed = [c["chunk_id"] for c in chunks if cache[c["chunk_id"]]["status"] == "failed"]
+    if failed:
+        # A failed chunk is NOT done: stop before dedup so the graph never silently misses it.
+        print(f"\n[Extract] {len(failed)} chunk GAGAL (output tak terbaca dua kali): {failed}")
+        print("[Extract] Build dihentikan sebelum dedup. Jalankan lagi 'python main.py build' untuk "
+              "mengulang chunk itu saja.")
+        return
     print("All chunks extracted successfully.")
-    atomic_write_json(EXTRACTION_MODELS_PATH, chunk_models, indent=2)
-    model_counts = {}
-    for m in chunk_models.values():
-        model_counts[m] = model_counts.get(m, 0) + 1
-    print(f"[LLM] Chunks per model: {model_counts}  (detail: {EXTRACTION_MODELS_PATH})")
+    # Chunk order (not extraction order) so dedup decisions are deterministic across resumes.
+    knowledge_items = [(c["chunk_id"], ExtractedKnowledge.model_validate(cache[c["chunk_id"]]["data"]))
+                       for c in chunks]
 
     # 3.5 Post-extraction validation + author normalization (graph-only; does NOT touch
     #     the vector store). These mutate the ExtractedKnowledge objects in place, so the
@@ -301,11 +318,13 @@ def build_pipeline():
         print(f"[Integrity] Could not write the manifest: {e}. Create it later with: python corpus.py manifest")
 
     # Clean up checkpoints after successful completion
-    removed = [p for p in (CHECKPOINT_PATH, DEDUP_CHECKPOINT_PATH) if os.path.exists(p)]
+    # The extraction archive is kept on purpose (audit + reuse); only the dedup checkpoint goes.
+    removed = [p for p in (DEDUP_CHECKPOINT_PATH,) if os.path.exists(p)]
     for p in removed:
         os.remove(p)
     if removed:
-        print("[Checkpoint] Cleared all checkpoints (build complete).")
+        print(f"[Checkpoint] Cleared the dedup checkpoint (build complete; extraction archive kept: "
+              f"{EXTRACTION_CACHE_PATH}).")
 
     print("=== Build Pipeline Complete ===")
 
@@ -340,6 +359,7 @@ GraphRAG Paper Explorer
 =======================
 
   python main.py build                      Bangun knowledge graph dari PDF di data/raw/
+  python main.py build --reextract          Sama, tapi abaikan arsip ekstraksi (ekstrak ulang semua)
   python main.py query -q "pertanyaan"      Tanya lewat terminal
 
 Perintah lain:
@@ -361,13 +381,15 @@ if __name__ == "__main__":
     parser.add_argument("mode", nargs="?", choices=["build", "query"],
                         help="build = bangun graph, query = tanya")
     parser.add_argument("--query", "-q", type=str, help="Pertanyaan (untuk mode 'query')")
+    parser.add_argument("--reextract", action="store_true",
+                        help="build: abaikan arsip ekstraksi dan ekstrak ulang semua chunk")
 
     args = parser.parse_args()
 
     if args.mode is None:
         print(USAGE)
     elif args.mode == "build":
-        build_pipeline()
+        build_pipeline(reextract=args.reextract)
     elif args.mode == "query":
         if not args.query:
             print('Error: mode "query" butuh pertanyaan.\n')

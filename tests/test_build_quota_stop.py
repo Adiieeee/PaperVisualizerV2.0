@@ -1,6 +1,7 @@
 """build_pipeline saat kuota harian habis SETELAH dedup: berhenti (bukan melewati diam-diam), checkpoint
 tetap ada, dan re-run tidak mengulang dedup. Semua dependensi berat dipalsukan; tidak ada file di
 data/processed yang disentuh. Tanpa jaringan/kuota."""
+import json
 import os
 
 import pytest
@@ -31,8 +32,15 @@ class _FakeLLM:
         self.metadata_calls = getattr(self, "metadata_calls", 0) + 1
         return PaperMeta(title="A Paper", models=[])
 
+    extract_calls = 0
+    extract_status = {}  # teks -> status paksa (mis. "failed")
+
     def extract_entities(self, text, paper_title=None):
-        return ExtractionResult(_knowledge(int(text.split()[-1])), "ok", 1)
+        self.extract_calls += 1
+        status = self.extract_status.get(text, "ok")
+        if status == "failed":
+            return ExtractionResult(ExtractedKnowledge(), "failed", 2)
+        return ExtractionResult(_knowledge(int(text.split()[-1])), status, 1)
 
     def resolve_dedup(self, cand, typ, candidates):
         self.dedup_calls.append(cand)
@@ -94,8 +102,7 @@ class _FakeAnalytics:
 @pytest.fixture
 def env(tmp_path, monkeypatch):
     state = {"llm": None, "saved_graphs": []}
-    monkeypatch.setattr(main, "CHECKPOINT_PATH", str(tmp_path / "checkpoint_extraction.json"))
-    monkeypatch.setattr(main, "EXTRACTION_MODELS_PATH", str(tmp_path / "extraction_models.json"))
+    monkeypatch.setattr(main, "EXTRACTION_CACHE_PATH", str(tmp_path / "extraction_cache.json"))
     monkeypatch.setattr(D, "DEDUP_CHECKPOINT_PATH", str(tmp_path / "checkpoint_dedup.json"))
     monkeypatch.setattr(D, "SIMILARITY_DEBUG_PATH", str(tmp_path / "similarity_debug.csv"))
     monkeypatch.setattr(main.DocumentProcessor, "process_directory", lambda self, d: [dict(c) for c in CHUNKS])
@@ -120,7 +127,7 @@ def test_summary_quota_stops_build_keeps_checkpoints_and_rerun_skips_dedup(env):
     assert env["llm"].dedup_calls == ["SGD optimizer"]
     # Berhenti sebelum graph disimpan: graph/chroma/manifest lama tetap konsisten.
     assert env["saved_graphs"] == []
-    assert (env["tmp"] / "checkpoint_extraction.json").exists()
+    assert (env["tmp"] / "extraction_cache.json").exists()
     assert (env["tmp"] / "checkpoint_dedup.json").exists()
 
     env["llm"] = _FakeLLM()
@@ -128,7 +135,8 @@ def test_summary_quota_stops_build_keeps_checkpoints_and_rerun_skips_dedup(env):
     assert env["llm"].dedup_calls == []  # dedup tidak diulang (tanpa kuota, keputusan sama)
     nodes = env["saved_graphs"][-1]
     assert "Stochastic Gradient Descent" in nodes and "SGD optimizer" not in nodes  # nama kanonik
-    assert not (env["tmp"] / "checkpoint_extraction.json").exists()
+    assert env["llm"].extract_calls == 0  # ekstraksi dipakai ulang dari arsip
+    assert (env["tmp"] / "extraction_cache.json").exists()  # arsip TIDAK dihapus setelah build sukses
     assert not (env["tmp"] / "checkpoint_dedup.json").exists()
 
 
@@ -138,7 +146,7 @@ def test_embedding_dimension_mismatch_stops_before_any_llm_call(env, monkeypatch
     env["llm"] = _FakeLLM()
     main.build_pipeline()
     assert getattr(env["llm"], "metadata_calls", 0) == 0 and env["llm"].dedup_calls == []
-    assert not (env["tmp"] / "checkpoint_extraction.json").exists()
+    assert not (env["tmp"] / "extraction_cache.json").exists()
 
 
 def test_matching_embedding_dimension_passes_preflight(env, monkeypatch):
@@ -174,3 +182,59 @@ def test_builder_family_merge_reraises_quota_but_skips_other_errors(monkeypatch)
         b.merge_family_aliases(_Llm(DailyQuotaExceededError("quota")))
     b.merge_family_aliases(_Llm(RuntimeError("parse/transient")))  # tetap dilewati, tidak raise
     assert not b.graph.has_edge("ChatGPT", "GPT")
+
+
+# --- Arsip ekstraksi: pakai ulang, ekstrak ulang bila berubah, chunk gagal tidak dianggap selesai ---
+
+def _cache(env):
+    return json.loads((env["tmp"] / "extraction_cache.json").read_text(encoding="utf-8"))["chunks"]
+
+
+def test_valid_archive_entries_are_reused_without_llm_calls(env):
+    env["llm"] = _FakeLLM()
+    main.build_pipeline()
+    assert env["llm"].extract_calls == 2
+    assert {e["status"] for e in _cache(env).values()} == {"ok"}
+    env["llm"] = _FakeLLM()
+    main.build_pipeline()
+    assert env["llm"].extract_calls == 0
+
+
+def test_changed_chunk_text_is_reextracted_alone(env, monkeypatch):
+    env["llm"] = _FakeLLM()
+    main.build_pipeline()
+    changed = [dict(CHUNKS[0]), {**CHUNKS[1], "text": "teks yang berubah 1"}]
+    monkeypatch.setattr(main.DocumentProcessor, "process_directory", lambda self, d: [dict(c) for c in changed])
+    env["llm"] = _FakeLLM()
+    main.build_pipeline()
+    assert env["llm"].extract_calls == 1
+
+
+def test_changed_prompt_or_schema_reextracts_everything(env, monkeypatch):
+    env["llm"] = _FakeLLM()
+    main.build_pipeline()
+    monkeypatch.setattr(main, "extraction_fingerprint", lambda: "prompt-baru")
+    env["llm"] = _FakeLLM()
+    main.build_pipeline()
+    assert env["llm"].extract_calls == 2
+
+
+def test_failed_chunk_stops_before_dedup_and_rerun_retries_only_it(env):
+    env["llm"] = _FakeLLM()
+    env["llm"].extract_status = {"teks 1": "failed"}
+    main.build_pipeline()
+    assert env["llm"].dedup_calls == [] and env["saved_graphs"] == []  # berhenti sebelum dedup
+    assert _cache(env)[f"{DOC}_chunk_1"]["status"] == "failed"
+
+    env["llm"] = _FakeLLM()  # sekarang berhasil
+    main.build_pipeline()
+    assert env["llm"].extract_calls == 1  # hanya chunk yang gagal
+    assert env["saved_graphs"]  # build selesai
+
+
+def test_reextract_flag_ignores_the_archive(env):
+    env["llm"] = _FakeLLM()
+    main.build_pipeline()
+    env["llm"] = _FakeLLM()
+    main.build_pipeline(reextract=True)
+    assert env["llm"].extract_calls == 2
