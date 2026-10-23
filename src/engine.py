@@ -7,6 +7,7 @@ from src.vectorstore.chromadb_store import ChromaStore
 from src.query.router import QueryRouter
 from src.query.resolver import QueryResolver
 from src.query.traversal import GraphTraversal
+from src.query.graph_rerank import GraphFactReranker
 from src.graph.analytics import GraphAnalytics
 from src.security.integrity import check_artifacts
 from src.config import load_paper_metadata
@@ -45,6 +46,7 @@ class GraphRAGEngine:
         self.router = QueryRouter(self.llm)
         self.resolver = QueryResolver(self.embed, self.chroma, self.graph)
         self.traversal = GraphTraversal(self.graph)
+        self.reranker = GraphFactReranker(self.embed)
         self.analytics = GraphAnalytics(self.graph)
         self.paper_titles = {doc: m.get("title") for doc, m in load_paper_metadata().items()}
 
@@ -111,7 +113,10 @@ class GraphRAGEngine:
                 print(f"[3] Traversing graph from {nodes} (multi-hop, budget {budget}/entitas)")
                 context_parts.append("Graph Context:")
                 for n in nodes:
-                    trav_result = self.traversal.traverse(n, max_hops=2, max_rels=budget)
+                    # Semua relasi 2-hop diambil, lalu dipangkas & diurutkan menurut relevansi terhadap
+                    # pertanyaan asli (bukan search_query yang hanya nama entitas).
+                    trav_result = self.traversal.traverse(n, max_hops=2, max_rels=None)
+                    trav_result = self.reranker.select(trav_result, user_query, budget)
                     context_parts.append(self.traversal.format_traversal_context(trav_result))
             else:
                 print("[3] Node not found, falling back to Chunk search")

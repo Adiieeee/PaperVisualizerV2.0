@@ -1,12 +1,12 @@
 import networkx as nx
-from typing import Dict, Any
+from typing import Any, Dict, Optional
 
 
 class GraphTraversal:
     def __init__(self, graph: nx.Graph):
         self.graph = graph
 
-    def traverse(self, start_node: str, max_hops: int = 2, max_rels: int = 150,
+    def traverse(self, start_node: str, max_hops: int = 2, max_rels: Optional[int] = 150,
                  through_source_paper: bool = True) -> Dict[str, Any]:
         """
         BFS up to `max_hops` from start_node (default 2 → enables lineage/chain answers and
@@ -43,7 +43,11 @@ class GraphTraversal:
         # Jatah budget PER HOP. Tanpa ini, node hub (paper dgn puluhan relasi langsung)
         # menghabiskan seluruh `max_rels` di hop-1, sehingga fakta hop-2 seperti
         # Paper -> Author -> Institution tidak pernah terekam.
-        hop1_cap = max(1, int(max_rels * 0.6))
+        # max_rels=None: rekam semua relasi; pemangkasan diserahkan ke GraphFactReranker (menurut relevansi).
+        if max_rels is None:
+            max_rels = hop1_cap = float("inf")
+        else:
+            hop1_cap = max(1, int(max_rels * 0.6))
         hop_used = {}
 
         for hop in range(1, max_hops + 1):

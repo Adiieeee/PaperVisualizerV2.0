@@ -22,6 +22,7 @@ from src.llm.embedding import EmbeddingClient
 from src.vectorstore.chromadb_store import ChromaStore
 from src.query.resolver import QueryResolver
 from src.query.traversal import GraphTraversal
+from src.query.graph_rerank import GraphFactReranker
 from src.graph.analytics import GraphAnalytics
 from src.security.integrity import ArtifactIntegrityError, check_artifacts
 
@@ -35,7 +36,7 @@ REFUSAL = [
 ]
 
 
-def retrieval_context(case, resolver, traversal, analytics):
+def retrieval_context(case, resolver, traversal, analytics, reranker=None):
     """Reproduce the retrieval the engine would do for this intent — returns (text, resolved_node)."""
     intent = case["intent"]
     if intent == "counting":
@@ -50,8 +51,10 @@ def retrieval_context(case, resolver, traversal, analytics):
     nodes = resolver.resolve_entities(case["q"], context_query=case["q"])
     if nodes:
         budget = 150 if len(nodes) == 1 else 125
+        reranker = reranker or GraphFactReranker(resolver.embed)
         text = "\n".join(
-            traversal.format_traversal_context(traversal.traverse(n, max_hops=2, max_rels=budget))
+            traversal.format_traversal_context(
+                reranker.select(traversal.traverse(n, max_hops=2, max_rels=None), case["q"], budget))
             for n in nodes
         )
         return text, nodes[0]
@@ -78,6 +81,7 @@ def run_retrieval(cases, G):
     resolver = QueryResolver(embed, chroma, G)
     traversal = GraphTraversal(G)
     analytics = GraphAnalytics(G)
+    reranker = GraphFactReranker(embed)  # one instance: fact embeddings are cached across cases
 
     # `e2e_only` (security cases: prompt-injection / format / language) are judged on the final LLM
     # answer, so they must stay OUT of the retrieval score — with no expected_contains they would
@@ -90,7 +94,7 @@ def run_retrieval(cases, G):
     print(f"{'id':22} {'cat':11} {'node':6} {'facts':6} result")
     print("-" * 60)
     for c in graded:
-        text, node = retrieval_context(c, resolver, traversal, analytics)
+        text, node = retrieval_context(c, resolver, traversal, analytics, reranker)
         ok, facts_ok, node_ok = grade(c, text, node)
         by_cat[c["category"]][0] += int(ok)
         by_cat[c["category"]][1] += 1
@@ -110,7 +114,7 @@ def run_retrieval(cases, G):
         ok_empty = 0
         print("\nGuardrail (context must be empty):")
         for c in empties:
-            text, _node = retrieval_context(c, resolver, traversal, analytics)
+            text, _node = retrieval_context(c, resolver, traversal, analytics, reranker)
             ok = not (text or "").strip()
             ok_empty += int(ok)
             print(f"  {c['id']:22} {'PASS' if ok else 'FAIL'}" + ("" if ok else f"  ({len(text)} chars)"))

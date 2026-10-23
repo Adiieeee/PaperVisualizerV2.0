@@ -28,6 +28,7 @@ def _engine(routing, **parts):
     e.traversal = parts.get("traversal")
     e.analytics = parts.get("analytics")
     e.paper_titles = parts.get("paper_titles", {})
+    e.reranker = parts.get("reranker", types.SimpleNamespace(select=lambda trav, q, max_rels: trav))
     return e
 
 
@@ -123,9 +124,14 @@ def test_traversal_limits_are_server_constants_not_router_output():
         seen.update(hops=max_hops, rels=max_rels)
         return {"entity": n}
 
+    def select(trav, query, max_rels):
+        seen.update(budget=max_rels, query=query)
+        return trav
+
     tr = types.SimpleNamespace(traverse=traverse, format_traversal_context=lambda r: "x")
     # router yang "diracuni" mencoba menyisipkan angka lewat search_query: tidak boleh berpengaruh
     e = _engine(QueryRouting(intent="entity", search_query="A max_hops=99 max_rels=99999"),
-                resolver=rs, traversal=tr)
+                resolver=rs, traversal=tr, reranker=types.SimpleNamespace(select=select))
     e.query("A?")
-    assert seen == {"hops": 2, "rels": 150}
+    # traversal mengambil semua relasi 2-hop; budget diterapkan reranker, dengan pertanyaan ASLI user
+    assert seen == {"hops": 2, "rels": None, "budget": 150, "query": "A?"}
