@@ -28,6 +28,7 @@ python corpus.py manifest               # write manifest.json for the ACTIVE cor
 python corpus.py audit                  # read-only scan of graph + chunks for injection-like text
 python -m scripts.test_llm_client       # live LiteLLM smoke test: Gemini, simulated-quota Groq fallback, schemas (~6 requests)
 python -m scripts.calibrate_embedding --model <hf id> --revision <sha>   # recalibrate embedding thresholds, no LLM quota
+python -m scripts.community_stats       # community size distribution/coverage of the current graph, no LLM quota (run after changing corpus)
 ```
 
 - `evaluate.py` is the retrieval regression harness; run it after any query-time change and compare the score before → after. It has no per-case filter. Cases with `e2e_only` / `expected_refuse` are excluded from the retrieval score and only graded by `--e2e` (`must_not_contain` flags leaked/obeyed injected content).
@@ -46,7 +47,7 @@ Two pipelines share `data/processed/` (gitignored) as their interface: `graph.gr
 4. **Clean** (`extraction/cleaner.py`): generic-term blocklist, min name length, author splitting/"et al." stripping. Runs before dedup.
 5. **Dedup** (`extraction/deduplicator.py`, `HybridDeduplicator`): per-type namespace; exact → normalized (case/punct/acronym) → embedding cosine ≥ `DEDUP_SIMILARITY_THRESHOLD` (0.75) → LLM confirm. Prompt guards: numbers/versions never merge (ResNet-44 ≠ ResNet-56) and no hypernym merging. Every comparison is logged to `similarity_debug.csv`; state is checkpointed to `checkpoint_dedup.json`.
 6. **Graph** (`graph/builder.py`): `add_knowledge_with_provenance` anchors every non-Paper node to its source Paper with a synthetic `mentioned_in` edge; then `link_models_to_papers`, `reclassify_noncanonical_papers` (cited papers → Method), `link_entity_families` (`variant_of` edges from version-suffix names, purely regex-based), `merge_family_aliases` (few LLM calls).
-7. **Communities** (`graph/analytics.py`): Louvain over the graph **excluding Paper nodes**; each community summarized by the LLM and stored in the `community_summaries` Chroma collection. Chunks go in the `chunks` collection. Then `manifest.json` (integrity manifest) and a static `graph_visualization.html` snapshot are written.
+7. **Communities** (`graph/analytics.py`): weighted Louvain (fixed seed) over a **chunk co-occurrence graph**, not the extracted relations: two entities are linked when they share a `source_chunk_id` (taken from the node and all its edges, incl. edges to Paper), weight = shared chunks + 1 per real relation. Paper/Author/Institution are excluded (`COMMUNITY_EXCLUDED_TYPES`); communities < `COMMUNITY_MIN_SIZE` (3) are dropped, their nodes are outliers. Without Paper the extracted relations barely connect anything (most attach to a Paper), which is why co-occurrence is used. Each community is summarized from `community_context` (typed entities + descriptions + member relations) and the `community_summaries` Chroma collection is **replaced** each build (ids are 0..N-1). Chunks go in the `chunks` collection. Then `manifest.json` (integrity manifest) and a static `graph_visualization.html` snapshot are written.
 
 ### Query (`src/engine.py: GraphRAGEngine.query`)
 
