@@ -34,6 +34,17 @@ def fact_text(rel: Dict[str, Any]) -> str:
     return f"{text} — {rel['description']}" if rel.get("description") else text
 
 
+def all_fact_texts(graph) -> List[str]:
+    """Semua teks fakta yang bisa muncul di konteks: tiap edge dari KEDUA arah, karena arah source/target
+    ditentukan oleh traversal (graph tak berarah). Atribut dibaca persis seperti traverse()."""
+    texts = []
+    for u, v, ed in graph.edges(data=True):
+        for source, target in ((u, v), (v, u)):
+            texts.append(fact_text({"source": source, "target": target,
+                                    "relation": ed.get("relation"), "description": ed.get("description")}))
+    return list(dict.fromkeys(texts))
+
+
 def load_fact_cache(path: str) -> Dict[str, np.ndarray]:
     """{teks fakta: vektor} dari disk; {} bila tidak ada, rusak, atau dibuat oleh model lain."""
     if not path or not os.path.exists(path):
@@ -53,8 +64,8 @@ def save_fact_cache(path: str, cache: Dict[str, np.ndarray]) -> None:
 
     def _write(tmp: str) -> None:
         with open(tmp, "wb") as f:  # objek file: np.savez menambah ".npz" pada nama file tanpa ekstensi itu
-            np.savez(f, model=np.array(_CACHE_MODEL_ID), texts=np.array(texts),
-                     vectors=np.stack([cache[t] for t in texts]))
+            vectors = np.stack([cache[t] for t in texts]) if texts else np.zeros((0, 0), dtype=np.float32)
+            np.savez(f, model=np.array(_CACHE_MODEL_ID), texts=np.array(texts, dtype=str), vectors=vectors)
 
     atomic_write(path, _write)
 
@@ -65,19 +76,44 @@ class GraphFactReranker:
         self.cache_path = cache_path
         self._cache: Optional[Dict[str, np.ndarray]] = None  # dimuat dari disk saat pertama dipakai
 
-    def score(self, query: str, rels: List[Dict[str, Any]]) -> List[float]:
+    def _loaded(self) -> Dict[str, np.ndarray]:
         if self._cache is None:
             self._cache = load_fact_cache(self.cache_path)
-        texts = [fact_text(r) for r in rels]
-        missing = [t for t in dict.fromkeys(texts) if t not in self._cache]
+        return self._cache
+
+    def _save(self) -> None:
+        if self.cache_path:
+            try:
+                save_fact_cache(self.cache_path, self._cache)
+            except OSError as e:  # disk penuh / read-only: tetap jalan dengan cache di memori
+                print(f"[Rerank] Cache embedding fakta tidak tersimpan ({e})")
+
+    def _embed_missing(self, texts: List[str]) -> int:
+        cache = self._loaded()
+        missing = [t for t in dict.fromkeys(texts) if t not in cache]
         if missing:
             for t, vec in zip(missing, self.embed.embed_batch(missing)):
-                self._cache[t] = np.asarray(vec, dtype=np.float32)
-            if self.cache_path:
-                try:
-                    save_fact_cache(self.cache_path, self._cache)
-                except OSError as e:  # disk penuh / read-only: tetap jalan dengan cache di memori
-                    print(f"[Rerank] Cache embedding fakta tidak tersimpan ({e})")
+                cache[t] = np.asarray(vec, dtype=np.float32)
+            self._save()
+        return len(missing)
+
+    def warm(self, graph) -> Dict[str, int]:
+        """Isi cache untuk SEMUA fakta graph (dipanggil di akhir build) dan buang teks yang tak ada lagi di
+        graph. Hanya fakta yang belum ada di cache yang di-embed, jadi build ulang korpus yang mirip cepat."""
+        texts = all_fact_texts(graph)
+        cache = self._loaded()
+        wanted = set(texts)
+        stale = [t for t in cache if t not in wanted]
+        for t in stale:
+            del cache[t]
+        computed = self._embed_missing(texts)
+        if stale and not computed:
+            self._save()
+        return {"facts": len(texts), "computed": computed, "pruned": len(stale)}
+
+    def score(self, query: str, rels: List[Dict[str, Any]]) -> List[float]:
+        texts = [fact_text(r) for r in rels]
+        self._embed_missing(texts)
         q = np.asarray(self.embed.embed_text(query), dtype=np.float32)
         return [float(np.dot(q, self._cache[t])) for t in texts]
 

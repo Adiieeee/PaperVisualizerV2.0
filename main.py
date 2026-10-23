@@ -13,8 +13,9 @@ from src.graph.builder import GraphBuilder
 from src.graph.analytics import GraphAnalytics
 from src.vectorstore.chromadb_store import ChromaStore
 from src.engine import GraphRAGEngine
+from src.query.graph_rerank import GraphFactReranker
 from src.config import (
-    COMMUNITY_MIN_SIZE, ExtractedKnowledge, LLMExtractedKnowledge, load_paper_metadata, save_paper_metadata,
+    COMMUNITY_MIN_SIZE, FACT_EMBEDDINGS_PATH, ExtractedKnowledge, LLMExtractedKnowledge, load_paper_metadata, save_paper_metadata,
 )
 from src.security.integrity import (
     ArtifactIntegrityError, atomic_write_json, build_manifest, chroma_stats, write_manifest,
@@ -319,6 +320,18 @@ def build_pipeline(reextract: bool = False):
         print("[Integrity] Wrote data/processed/manifest.json")
     except Exception as e:
         print(f"[Integrity] Could not write the manifest: {e}. Create it later with: python corpus.py manifest")
+
+    # 7.6 Cache embedding fakta untuk rerank graph (query-time): diisi lengkap sekarang supaya tidak ada query
+    #     yang menunggu embedding. Dibaca dari graph.graphml tersimpan agar teksnya persis seperti saat query.
+    #     Tanpa LLM; gagal di sini tidak membatalkan build (query mengisi cache sendiri bila perlu).
+    try:
+        import networkx as nx
+        stats = GraphFactReranker(embed, cache_path=FACT_EMBEDDINGS_PATH).warm(
+            nx.read_graphml("data/processed/graph.graphml"))
+        print(f"[Rerank] Fact embedding cache: {stats['facts']} facts, {stats['computed']} newly embedded, "
+              f"{stats['pruned']} stale removed ({FACT_EMBEDDINGS_PATH})")
+    except Exception as e:
+        print(f"[Rerank] Could not fill the fact embedding cache: {e}. Queries will fill it on demand.")
 
     # Clean up checkpoints after successful completion
     # The extraction archive is kept on purpose (audit + reuse); only the dedup checkpoint goes.

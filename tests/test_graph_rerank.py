@@ -158,3 +158,51 @@ def test_cache_from_another_model_or_corrupt_file_is_ignored(tmp_path, monkeypat
     broken = _Embed({})
     GraphFactReranker(broken, cache_path=path).select(trav, "q", 150)
     assert broken.batches == [["E uses_metric M"]]
+
+
+def _small_graph():
+    G = nx.Graph()
+    G.add_node("P", type="Paper")
+    G.add_node("M", type="Method")
+    G.add_node("D", type="Dataset")
+    G.add_node("F", type="Finding")
+    G.add_edge("P", "M", relation="proposes_method")
+    G.add_edge("M", "D", relation="evaluated_on", description="on D")
+    G.add_edge("P", "F", relation="finds")
+    return G
+
+
+def test_all_fact_texts_cover_every_traversal_text():
+    from src.query.graph_rerank import all_fact_texts
+    G = _small_graph()
+    texts = set(all_fact_texts(G))
+    seen = {fact_text(r) for n in G for r in GraphTraversal(G).traverse(n, 2, None)["relationships"]}
+    assert seen <= texts and len(texts) == 2 * G.number_of_edges()
+
+
+def test_warm_embeds_only_missing_and_prunes_stale(tmp_path):
+    path = str(tmp_path / "fact_embeddings.npz")
+    G = _small_graph()
+    emb = _Embed({})
+    stats = GraphFactReranker(emb, cache_path=path).warm(G)
+    assert stats == {"facts": 6, "computed": 6, "pruned": 0} and len(emb.batches) == 1
+
+    G.remove_edge("P", "F")
+    G.add_edge("D", "F", relation="related_to")
+    emb2 = _Embed({})
+    stats = GraphFactReranker(emb2, cache_path=path).warm(G)
+    assert stats == {"facts": 6, "computed": 2, "pruned": 2}
+    assert sorted(emb2.batches[0]) == ["D related_to F", "F related_to D"]
+
+    emb3 = _Embed({})  # setelah warm, query tidak meng-embed fakta lagi
+    GraphFactReranker(emb3, cache_path=path).select(GraphTraversal(G).traverse("M", 2, None), "q", 150)
+    assert emb3.batches == []
+
+
+def test_warm_on_an_empty_graph_writes_an_empty_cache(tmp_path):
+    from src.query.graph_rerank import load_fact_cache
+    path = str(tmp_path / "fact_embeddings.npz")
+    GraphFactReranker(_Embed({}), cache_path=path).warm(_small_graph())
+    stats = GraphFactReranker(_Embed({}), cache_path=path).warm(nx.Graph())
+    assert stats == {"facts": 0, "computed": 0, "pruned": 6}
+    assert load_fact_cache(path) == {}
