@@ -103,4 +103,4 @@ Structured output is sent via `response_format_for(schema)`: a non-strict JSON s
 ## Workflow conventions
 
 - Don't add new retrieval/resolution heuristics without a measured failing case in `eval/eval_cases.json`; report the `evaluate.py` score before → after.
-- Current baseline (2026-07-31 corpus, 8 sycophancy papers, bge-small-en-v1.5): retrieval 29/31 = 94% (remaining failures are documented Indonesian-paraphrase resolution limits). The bge-m3 calibration on that graph gave 30/31; replace this baseline after the bge-m3 rebuild.
+- Current baseline (2026-10-23 rebuild, 8 sycophancy papers, bge-m3, 446 nodes): retrieval 37/40 = 92%, guardrail 5/5. Remaining failures: `count-method2` (top-10 Method is dominated by LLM model names), `resolve-paraphrase2` (Indonesian paraphrase), `adv-3hop` (the Institution is 3 hops away; traversal is 2-hop). E2E before reranking/guardrails: 49/61 = 80%.
