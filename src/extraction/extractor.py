@@ -13,7 +13,7 @@ class KnowledgeExtractor:
         results = []
         for i, chunk in enumerate(chunks):
             print(f"Extracting knowledge from chunk {i+1}/{len(chunks)}...")
-            knowledge = self.llm.extract_entities(chunk["text"])
+            knowledge = self.llm.extract_entities(chunk["text"]).knowledge
             
             # Keep track of chunk provenance for grounding
             for entity in knowledge.entities:

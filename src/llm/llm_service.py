@@ -26,14 +26,65 @@ def print_retry(retry_state):
         print(f"Error: {exc}")
 
 from src.config import (
-    GEMINI_API_KEY, ExtractedKnowledge, LLMExtractedKnowledge, LLM_RELATION_TYPES, DedupDecision,
-    QueryRouting, PaperMeta, FamilyDecision, ANSWER_MAX_OUTPUT_TOKENS,
+    GEMINI_API_KEY, Entity, ExtractedKnowledge, LLMExtractedKnowledge, LLM_RELATION_TYPES,
+    Relationship, DedupDecision, QueryRouting, PaperMeta, FamilyDecision, ANSWER_MAX_OUTPUT_TOKENS,
 )
 from src.llm.prompts import build_answer_prompt, ContextBlock
 from src.security.sanitize import neutralize_tags
-from typing import Iterable, get_args
+from dataclasses import dataclass
+from typing import Iterable, Optional, Tuple, get_args
 
 _LLM_RELATIONS = ", ".join(get_args(LLM_RELATION_TYPES))
+
+
+@dataclass
+class ExtractionResult:
+    knowledge: ExtractedKnowledge
+    status: str        # ok | retried | salvaged | failed
+    attempts: int      # panggilan LLM yang dipakai (1 atau 2)
+    dropped: int = 0   # item yang dibuang saat diselamatkan
+
+
+def _parse_strict(raw: str) -> Optional[ExtractedKnowledge]:
+    """Output utuh lolos skema LLM -> model tersimpan; selain itu None."""
+    try:
+        return ExtractedKnowledge.model_validate(LLMExtractedKnowledge.model_validate_json(raw).model_dump())
+    except ValueError:  # pydantic.ValidationError juga turunan ValueError
+        return None
+
+
+def salvage_knowledge(raw: str) -> Optional[Tuple[ExtractedKnowledge, int]]:
+    """Selamatkan item yang valid dari output yang tidak lolos skema. None bila JSON tak terbaca.
+    Relasi bertipe di luar daftar (mis. "evaluates") -> `related_to` dengan label asli di description;
+    item rusak lainnya dibuang. Mengembalikan (knowledge, jumlah item dibuang)."""
+    try:
+        data = json.loads(raw)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+
+    dropped, entities, relationships = 0, [], []
+    raw_entities = data.get("entities")
+    for item in raw_entities if isinstance(raw_entities, list) else []:
+        try:
+            entities.append(Entity.model_validate(item))
+        except ValueError:
+            dropped += 1
+
+    known = set(get_args(LLM_RELATION_TYPES))
+    raw_rels = data.get("relationships")
+    for item in raw_rels if isinstance(raw_rels, list) else []:
+        if (isinstance(item, dict) and item.get("relation_type") not in known
+                and isinstance(item.get("source_entity"), str) and isinstance(item.get("target_entity"), str)):
+            label, desc = str(item.get("relation_type")), item.get("description")
+            item = {**item, "relation_type": "related_to",
+                    "description": f"[{label}] {desc}" if isinstance(desc, str) and desc else f"[{label}]"}
+        try:
+            relationships.append(Relationship.model_validate(item))
+        except ValueError:
+            dropped += 1
+    return ExtractedKnowledge(entities=entities, relationships=relationships), dropped
 
 
 def build_extraction_prompt(text_chunk: str, paper_title: str = None) -> str:
@@ -112,21 +163,35 @@ class LLMService:
         retry=retry_if_exception(_is_retryable),
         before_sleep=print_retry
     )
-    def extract_entities(self, text_chunk: str, paper_title: str = None) -> ExtractedKnowledge:
+    def extract_entities(self, text_chunk: str, paper_title: str = None) -> "ExtractionResult":
         """
         Extract entities and relationships from a text chunk.
         Uses structured outputs to enforce the Pydantic schema.
         `paper_title` (B1): the canonical title of the paper this chunk belongs to, so the LLM
         anchors this paper's authors / proposed method to a consistent Paper entity.
+
+        Output tidak lolos skema -> panggil ulang SEKALI. Masih tidak lolos -> selamatkan sebagian dari
+        output dengan item valid terbanyak. Kedua output tak terbaca -> status "failed" (caller tidak
+        boleh menganggap chunk selesai). Dulu kegagalan parse diam-diam menjadi hasil kosong.
         """
         prompt = build_extraction_prompt(text_chunk, paper_title)
+        raws = []
+        for attempt in (1, 2):
+            raw = self._generate(prompt, "general", LLMExtractedKnowledge, temperature=0.1, validate=False)
+            knowledge = _parse_strict(raw)
+            if knowledge is not None:
+                return ExtractionResult(knowledge, "ok" if attempt == 1 else "retried", attempt)
+            print(f"  [Extract] Output tidak lolos skema (percobaan {attempt}/2).")
+            raws.append(raw)
 
-        try:
-            result = self._generate(prompt, "general", LLMExtractedKnowledge, temperature=0.1)
-            return ExtractedKnowledge.model_validate(result.model_dump())
-        except ValueError as e:
-            print(f"Failed to parse LLM output: {e}")
-            return ExtractedKnowledge(entities=[], relationships=[])
+        salvaged = [s for s in (salvage_knowledge(r) for r in raws) if s is not None]
+        if salvaged:
+            knowledge, dropped = max(salvaged, key=lambda s: len(s[0].entities) + len(s[0].relationships))
+            print(f"  [Extract] Diselamatkan sebagian: {len(knowledge.entities)} entitas, "
+                  f"{len(knowledge.relationships)} relasi, {dropped} item dibuang.")
+            return ExtractionResult(knowledge, "salvaged", 2, dropped)
+        print("  [Extract] GAGAL: kedua output tidak terbaca.")
+        return ExtractionResult(ExtractedKnowledge(), "failed", 2)
 
 
     @retry(

@@ -10,6 +10,7 @@ from src.config import DedupDecision, Entity, ExtractedKnowledge, FamilyDecision
 from src.extraction import deduplicator as D
 from src.graph.builder import GraphBuilder
 from src.llm.llm_client import DailyQuotaExceededError
+from src.llm.llm_service import ExtractionResult
 
 DOC = "paper.pdf"
 CHUNKS = [{"chunk_id": f"{DOC}_chunk_{i}", "doc_id": DOC, "text": f"teks {i}"} for i in range(2)]
@@ -31,7 +32,7 @@ class _FakeLLM:
         return PaperMeta(title="A Paper", models=[])
 
     def extract_entities(self, text, paper_title=None):
-        return _knowledge(int(text.split()[-1]))
+        return ExtractionResult(_knowledge(int(text.split()[-1])), "ok", 1)
 
     def resolve_dedup(self, cand, typ, candidates):
         self.dedup_calls.append(cand)

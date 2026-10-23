@@ -74,14 +74,14 @@ def test_system_prompt_states_security_and_keeps_answer_rules():
 
 class _FakeLLM:
     """Meniru llm_client.call_llm: (hasil, model). Dengan schema -> instance Pydantic atau
-    ValueError; tanpa schema -> string ("" bila model tidak mengembalikan teks)."""
+    ValueError; tanpa schema atau validate=False -> string ("" bila tidak ada teks)."""
 
     def __init__(self, text, model="gemini-3.5-flash-lite"):
         self.text, self.model, self.calls = text, model, []
 
     def __call__(self, messages, alias="general", schema=None, **kwargs):
         self.calls.append({"prompt": messages[0]["content"], "alias": alias, "schema": schema, **kwargs})
-        if schema is None:
+        if schema is None or kwargs.get("validate") is False:
             return (self.text or ""), self.model
         try:
             return schema.model_validate_json(self.text or ""), self.model
@@ -121,20 +121,20 @@ def test_empty_response_raises_and_is_not_retried(empty, monkeypatch):
     assert len(c.fake.calls) == 1  # tanpa retry (deterministik)
 
 
-def test_extract_entities_parse_failure_returns_empty_without_retry(monkeypatch):
+def test_extract_entities_unreadable_output_is_retried_once_then_failed(monkeypatch):
     c = _client("bukan json", monkeypatch)
-    k = c.extract_entities("teks", paper_title="T")
-    assert k.entities == [] and k.relationships == []
-    assert len(c.fake.calls) == 1  # ValueError tidak boleh memicu retry tenacity (boros kuota)
-    assert c.fake.calls[0]["alias"] == "general"
+    r = c.extract_entities("teks", paper_title="T")
+    assert r.status == "failed" and r.knowledge.entities == [] and r.knowledge.relationships == []
+    assert len(c.fake.calls) == 2  # ulang SEKALI, lalu berhenti (tenacity tidak ikut meretry)
+    assert all(call["alias"] == "general" for call in c.fake.calls)
 
 
 def test_extract_entities_records_answering_model(monkeypatch):
     c = _client(json.dumps({"entities": [{"name": "SycEval", "type": "Dataset"}], "relationships": []}),
                 monkeypatch)
     c.fake.model = "openai/gpt-oss-120b"  # mis. fallback Groq saat kuota harian Gemini habis
-    k = c.extract_entities("teks")
-    assert [e.name for e in k.entities] == ["SycEval"]
+    r = c.extract_entities("teks")
+    assert r.status == "ok" and [e.name for e in r.knowledge.entities] == ["SycEval"]
     assert c.last_model == "openai/gpt-oss-120b"
 
 

@@ -47,11 +47,13 @@ def test_extraction_sends_llm_schema_and_returns_storage_model(monkeypatch):
         out = {"entities": [{"name": "SycEval", "type": "Paper"}, {"name": "Math QA", "type": "Task"}],
                "relationships": [{"source_entity": "SycEval", "target_entity": "Math QA",
                                   "relation_type": "addresses_task"}]}
+        if kw.get("validate") is False:
+            return json.dumps(out), "gemini-test"
         return schema.model_validate(out), "gemini-test"
 
     monkeypatch.setattr(svc, "call_llm", fake_call_llm)
     monkeypatch.setattr(svc.time, "sleep", lambda s: None)
-    k = svc.LLMService().extract_entities("teks", paper_title="SycEval")
+    k = svc.LLMService().extract_entities("teks", paper_title="SycEval").knowledge
     assert seen["schema"] is config.LLMExtractedKnowledge
     assert isinstance(k, config.ExtractedKnowledge)
     assert k.relationships[0].relation_type == "addresses_task"

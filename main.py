@@ -178,7 +178,7 @@ def build_pipeline():
         print(f"Extracting knowledge from chunk {global_idx}/{len(chunks)} ({chunk['chunk_id']})...")
         try:
             paper_title = paper_metadata.get(chunk["doc_id"], {}).get("title")  # B1: title injection
-            knowledge = llm.extract_entities(chunk["text"], paper_title=paper_title)
+            knowledge = llm.extract_entities(chunk["text"], paper_title=paper_title).knowledge
             knowledge_items.append((chunk["chunk_id"], knowledge))
             done_chunk_ids.add(chunk["chunk_id"])
             chunk_models[chunk["chunk_id"]] = llm.last_model
