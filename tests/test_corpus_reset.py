@@ -13,7 +13,7 @@ def tree(tmp_path, monkeypatch):
     (raw / "a.pdf").write_bytes(b"%PDF")
     for name in ("paper_metadata.json", "graph.graphml", "manifest.json", "graph_visualization.html",
                  "similarity_debug.csv", "checkpoint_extraction.json", "checkpoint_dedup.json",
-                 "extraction_models.json", ".gitkeep"):
+                 "extraction_models.json", "extraction_cache.json", ".gitkeep"):
         (processed / name).write_text("x", encoding="utf-8")
     (processed / "chroma_db").mkdir()
     (processed / "chroma_db" / "chroma.sqlite3").write_text("x", encoding="utf-8")
@@ -22,11 +22,12 @@ def tree(tmp_path, monkeypatch):
     return raw, processed
 
 
-def test_reset_index_keeps_pdfs_and_paper_metadata(tree):
+def test_reset_index_keeps_pdfs_paper_metadata_and_extraction_archive(tree):
     raw, processed = tree
     corpus.cmd_reset_index(types.SimpleNamespace(yes=True))
     assert (raw / "a.pdf").exists()
-    assert sorted(p.name for p in processed.iterdir()) == [".gitkeep", "paper_metadata.json"]
+    assert sorted(p.name for p in processed.iterdir()) == [
+        ".gitkeep", "extraction_cache.json", "paper_metadata.json"]
 
 
 def test_reset_index_asks_and_can_be_cancelled(tree, monkeypatch):
@@ -34,3 +35,16 @@ def test_reset_index_asks_and_can_be_cancelled(tree, monkeypatch):
     monkeypatch.setattr("builtins.input", lambda prompt: "n")
     corpus.cmd_reset_index(types.SimpleNamespace(yes=False))
     assert (processed / "graph.graphml").exists() and (processed / "chroma_db").exists()
+
+
+def test_clear_deletes_the_extraction_archive(tree):
+    _, processed = tree
+    corpus.cmd_clear(types.SimpleNamespace(yes=True))
+    assert not (processed / "extraction_cache.json").exists()
+
+
+def test_backup_includes_the_extraction_archive(tree, tmp_path, monkeypatch):
+    monkeypatch.setattr(corpus, "BACKUPS", tmp_path / "backups")
+    monkeypatch.setattr(corpus, "EVAL_CASES", tmp_path / "no_eval_cases.json")
+    corpus.cmd_backup(types.SimpleNamespace(name="uji"))
+    assert (tmp_path / "backups" / "uji" / "processed" / "extraction_cache.json").exists()

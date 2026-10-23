@@ -38,7 +38,9 @@ _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 def _valid_name(name: str) -> bool:
     return bool(_NAME_RE.match(name)) and ".." not in name
-OPTIONAL = ["graph_visualization.html", "extraction_models.json"]  # + audit model per chunk
+# extraction_cache.json: hasil LLM per chunk; dengan arsip ini korpus hasil restore bisa di-build tanpa
+# mengekstrak ulang.
+OPTIONAL = ["graph_visualization.html", "extraction_cache.json"]
 # Sengaja TIDAK di-backup: similarity_debug*.csv (log diagnostik, besar, tidak dipakai runtime)
 
 
@@ -153,7 +155,8 @@ def _wipe_current(verbose=True):
     for f in RAW.glob("*.pdf"):
         f.unlink(); removed.append(str(f))
     for pattern in ("graph.graphml", "paper_metadata.json", "graph_visualization.html",
-                    "similarity_debug*.csv", "checkpoint_*.json", "extraction_models.json"):
+                    "similarity_debug*.csv", "checkpoint_*.json", "extraction_cache.json",
+                    "extraction_models.json"):
         for f in PROCESSED.glob(pattern):
             f.unlink(); removed.append(str(f))
     chroma = PROCESSED / "chroma_db"
@@ -187,8 +190,9 @@ def cmd_clear(args):
     _wipe_current()
 
 
-# Artefak turunan yang bergantung pada model embedding / hasil build. PDF dan paper_metadata.json
-# (keluaran LLM, tidak bergantung pada embedding) sengaja TIDAK termasuk.
+# Artefak turunan yang bergantung pada model embedding / hasil build. PDF, paper_metadata.json dan
+# extraction_cache.json (keluaran LLM, tidak bergantung pada embedding) sengaja TIDAK termasuk.
+# extraction_models.json = berkas lama (sebelum arsip ekstraksi), dibersihkan bila masih ada.
 INDEX_ARTIFACTS = ("graph.graphml", "manifest.json", "graph_visualization.html",
                    "similarity_debug*.csv", "checkpoint_*.json", "extraction_models.json")
 
@@ -204,15 +208,16 @@ def _reset_index(verbose=True):
     if verbose:
         for r in removed:
             print(f"  - {r}")
-        print(f"[OK] {len(removed)} item dihapus. PDF dan paper_metadata.json dipertahankan; "
-              f"jalankan: python main.py build")
+        print(f"[OK] {len(removed)} item dihapus. PDF, paper_metadata.json dan arsip ekstraksi "
+              f"dipertahankan; jalankan: python main.py build")
     return removed
 
 
 def cmd_reset_index(args):
     print("Akan MENGHAPUS indeks hasil build (untuk build ulang, mis. setelah ganti model embedding):")
     print("  - chroma_db/, graph.graphml, manifest.json, visualisasi, log & checkpoint")
-    print(f"  Dipertahankan: {len(list(RAW.glob('*.pdf')))} PDF di data/raw/ dan paper_metadata.json")
+    print(f"  Dipertahankan: {len(list(RAW.glob('*.pdf')))} PDF di data/raw/, paper_metadata.json, "
+          f"extraction_cache.json")
     if not args.yes:
         if (PROCESSED / "graph.graphml").exists():
             print("\n[!] Belum di-backup? Batalkan lalu jalankan: python corpus.py backup <nama-tema>")
@@ -365,7 +370,8 @@ def main():
     p_c = sub.add_parser("clear", help="kosongkan korpus aktif")
     p_c.add_argument("-y", "--yes", action="store_true", help="tanpa konfirmasi")
 
-    p_x = sub.add_parser("reset-index", help="hapus indeks hasil build, pertahankan PDF + paper_metadata.json")
+    p_x = sub.add_parser("reset-index",
+                         help="hapus indeks hasil build, pertahankan PDF + paper_metadata.json + arsip ekstraksi")
     p_x.add_argument("-y", "--yes", action="store_true", help="tanpa konfirmasi")
 
     p_r = sub.add_parser("restore", help="pulihkan korpus dari backup")
