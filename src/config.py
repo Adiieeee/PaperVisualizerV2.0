@@ -52,6 +52,15 @@ DEDUP_SIMILARITY_THRESHOLD = 0.75
 # dengan evaluate.py setelah build). Dulu 0.72 untuk bge-small-en-v1.5.
 RESOLVER_SIM_THRESHOLD = 0.62
 
+# --- Community (graph-only; tidak menyentuh vector store chunk) ---
+# Louvain dijalankan atas graf ko-okurensi: dua entitas terhubung bila disebut di chunk yang sama.
+# Paper dikeluarkan (jadi hub, community = satu paper), Author/Institution juga (chunk pertama
+# memuat semua penulis + abstrak dan akan menyambung semuanya). Community < MIN_SIZE tidak
+# diringkas; node yang tersisa dianggap outlier.
+COMMUNITY_MIN_SIZE = 3
+COMMUNITY_EXCLUDED_TYPES = ("Paper", "Author", "Institution")
+COMMUNITY_SEED = 42  # Louvain acak; seed tetap = build reprodusibel
+
 # --- Post-extraction cleaning (graph quality; does NOT affect the vector store) ---
 MIN_ENTITY_NAME_LENGTH = 2  # Entities whose normalized name is shorter than this are dropped.
 
