@@ -1075,6 +1075,10 @@ class GraphVisualizer:
         "criticizes": "#f87171",
         "builds_on": "#38bdf8",
         "compares": "#22d3ee",
+        "addresses_task": "#f472b6",      # Task pink
+        "introduces_dataset": "#eab308",  # dataset amber, a shade darker than uses_dataset
+        "evaluated_on": "#fcd34d",
+        "related_to": "#94a3b8",          # slate-400: generic link kept when salvaging LLM output
         "mentioned_in": "#475569",  # slate-600: recessive provenance edge on dark bg
         "variant_of": "#64748b",    # slate-500: tautan varian -> keluarga (build-time)
     }
@@ -1094,7 +1098,7 @@ class GraphVisualizer:
     }
 
     # Indonesian edge descriptions for the Edge Filters box (DESIGN_REFERENCE §7.3),
-    # adapted to our 12 relation types (adds mentioned_in; no same_author in our schema).
+    # adapted to our relation types (config.RELATION_TYPES + build-time variant_of).
     EDGE_DESCRIPTIONS = {
         "written_by": "<b>[Paper &rarr; Author]</b> Penulis dari sebuah paper.",
         "affiliated_with": "<b>[Author &rarr; Institution]</b> Institusi tempat penulis bernaung.",
@@ -1107,6 +1111,10 @@ class GraphVisualizer:
         "criticizes": "<b>[Paper &rarr; Method/Metric]</b> Paper mengkritik atau menemukan kelemahan.",
         "builds_on": "<b>[Method &rarr; Method]</b> Metode ini pengembangan dari metode lain.",
         "compares": "<b>[Method/Paper &rarr; Method]</b> Perbandingan performa/efisiensi (A vs B).",
+        "addresses_task": "<b>[Paper/Method &rarr; Task]</b> Masalah yang ingin diselesaikan oleh paper/metode ini.",
+        "introduces_dataset": "<b>[Paper &rarr; Dataset]</b> Paper memperkenalkan/membuat dataset ini.",
+        "evaluated_on": "<b>[Method &rarr; Dataset]</b> Metode/model ini diuji pada dataset tersebut.",
+        "related_to": "<b>[Entity &rarr; Entity]</b> Hubungan lain yang tidak masuk daftar relasi (label asli di deskripsi).",
         "mentioned_in": "<b>[Entity &rarr; Paper]</b> Entity ini disebut/muncul di paper tersebut.",
         "variant_of": "<b>[Varian &rarr; Keluarga]</b> Versi/ukuran spesifik dari satu keluarga model atau dataset (mis. Llama-3-8B &rarr; Llama).",
     }

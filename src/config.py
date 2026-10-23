@@ -120,11 +120,17 @@ ENTITY_TYPES = Literal[
     "Metric", "Finding", "Limitation", "Task"
 ]
 
-RELATION_TYPES = Literal[
+# Relasi yang DITAWARKAN ke LLM (masuk skema ekstraksi).
+LLM_RELATION_TYPES = Literal[
     "uses_method", "uses_dataset", "uses_metric", "has_limitation", 
     "compares", "finds", "proposes_method", "criticizes", 
-    "builds_on", "written_by", "affiliated_with", "mentioned_in"
+    "builds_on", "written_by", "affiliated_with", "mentioned_in",
+    "addresses_task", "introduces_dataset", "evaluated_on",
 ]
+# Relasi yang boleh TERSIMPAN: + `related_to`, hanya dipakai saat menyelamatkan output LLM yang memuat
+# relasi di luar daftar (label aslinya disimpan di description). Sengaja tidak ditawarkan ke LLM supaya
+# tidak dipakai sebagai jalan pintas.
+RELATION_TYPES = Literal[LLM_RELATION_TYPES, "related_to"]
 
 
 # --- Pydantic Schemas for LLM Extraction ---
@@ -152,15 +158,25 @@ class Entity(BaseModel):
     description: Optional[str] = Field(None, description="A brief description of the entity based on the context.")
     _source_chunk_id: Optional[str] = PrivateAttr(default=None)
 
-class Relationship(BaseModel):
+# Catatan: docstring kelas Pydantic ikut masuk skema JSON yang dikirim ke LLM, jadi pakai komentar.
+# Relasi seperti yang boleh ditulis LLM (skema ekstraksi).
+class LLMRelationship(BaseModel):
     source_entity: str = Field(description="The name of the source entity.")
     target_entity: str = Field(description="The name of the target entity.")
-    relation_type: RELATION_TYPES = Field(description="The type of relationship between source and target.")
+    relation_type: LLM_RELATION_TYPES = Field(description="The type of relationship between source and target.")
     description: Optional[str] = Field(None, description="A brief explanation of how they are related in this context.")
     _source_chunk_id: Optional[str] = PrivateAttr(default=None)
 
-class ExtractedKnowledge(BaseModel):
+# Relasi tersimpan (cleaner/dedup/graph): juga menerima `related_to` hasil penyelamatan.
+class Relationship(LLMRelationship):
+    relation_type: RELATION_TYPES = Field(description="The type of relationship between source and target.")
+
+# Skema yang DIKIRIM ke LLM saat ekstraksi (tanpa `related_to`).
+class LLMExtractedKnowledge(BaseModel):
     entities: List[Entity] = Field(default_factory=list, description="List of all distinct entities found in the text.")
+    relationships: List[LLMRelationship] = Field(default_factory=list, description="List of relationships connecting the extracted entities.")
+
+class ExtractedKnowledge(LLMExtractedKnowledge):
     relationships: List[Relationship] = Field(default_factory=list, description="List of relationships connecting the extracted entities.")
 
 # --- Schema for Entity Linking / Dedup ---
