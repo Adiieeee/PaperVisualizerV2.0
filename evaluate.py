@@ -103,6 +103,18 @@ def run_retrieval(cases, G):
     print("-" * 60)
     print(f"OVERALL (retrieval): {passed}/{len(graded)} = {passed/len(graded)*100:.0f}%")
     print("By category: " + " | ".join(f"{cat} {p}/{t}" for cat, (p, t) in sorted(by_cat.items())))
+    # `expected_empty`: out-of-domain questions whose vector results must all fall below the relevance
+    # threshold, so the engine refuses without an LLM call. Scored apart from the retrieval score above.
+    empties = [c for c in cases if c.get("expected_empty")]
+    if empties:
+        ok_empty = 0
+        print("\nGuardrail (context must be empty):")
+        for c in empties:
+            text, _node = retrieval_context(c, resolver, traversal, analytics)
+            ok = not (text or "").strip()
+            ok_empty += int(ok)
+            print(f"  {c['id']:22} {'PASS' if ok else 'FAIL'}" + ("" if ok else f"  ({len(text)} chars)"))
+        print(f"GUARDRAIL: {ok_empty}/{len(empties)}")
     if negatives:
         print(f"\n{len(negatives)} case(s) are graded only in --e2e (refusal / security checks): "
               + ", ".join(c['id'] for c in negatives))
