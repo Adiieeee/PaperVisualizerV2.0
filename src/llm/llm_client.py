@@ -165,12 +165,15 @@ def call_llm(
     temperature: float = 0.0,
     max_parse_retries: int = 0,
     router: Optional[Router] = None,
+    validate: bool = True,
     **extra,
 ):
     """Return (hasil, nama_model_yang_dipakai).
 
     Kalau schema diisi, hasil adalah instance Pydantic (ValueError bila tidak lolos validasi).
     Kalau tidak, string ("" bila model tidak mengembalikan teks, mis. diblokir safety filter).
+    validate=False: schema tetap dikirim sebagai response_format, tapi hasilnya teks mentah — dipakai
+    untuk mengulang/menyelamatkan sebagian output yang tidak lolos validasi.
     Melempar DailyQuotaExceededError (= LLMQuotaError) kalau kuota harian habis dan tidak ada
     fallback yang berhasil; 429 per menit dan error lain di-raise apa adanya supaya caller
     meretry ke Gemini (bukan pindah ke Groq).
@@ -188,7 +191,7 @@ def call_llm(
         log.info("alias=%s model=%s usage=%s", alias, used_model, getattr(resp, "usage", None))
 
         content = resp.choices[0].message.content or ""
-        if schema is None:
+        if schema is None or not validate:
             return content, used_model
         try:
             return schema.model_validate(json.loads(content)), used_model

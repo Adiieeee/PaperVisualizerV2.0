@@ -152,6 +152,13 @@ def test_groq_per_minute_limit_is_reraised_for_retry():
 
 # --- Parsing ---
 
+def test_validate_false_returns_raw_text_but_still_sends_schema():
+    r = _FakeRouter(content='{"is_duplicate": "bukan bool"')  # tidak valid DAN terpotong
+    out, model = lc.call_llm(MSGS, schema=_Decision, router=r, validate=False)
+    assert out == '{"is_duplicate": "bukan bool"' and model == "gemini-flash-lite-latest"
+    assert r.calls[0]["response_format"] == lc.response_format_for(_Decision)
+
+
 def test_schema_result_and_model_name():
     r = _FakeRouter(content=OK_JSON)
     out, model = lc.call_llm(MSGS, alias="dedup", schema=_Decision, router=r)
