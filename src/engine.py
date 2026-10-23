@@ -18,6 +18,12 @@ NO_CONTEXT_MESSAGE = (
     "Maaf, tidak ada informasi tentang hal itu di dokumen yang tersedia. / "
     "Sorry, there is no information about this in the provided documents."
 )
+# Jawaban tetap untuk intent off_topic (router): tanpa retrieval dan tanpa panggilan LLM kedua.
+OFF_TOPIC_MESSAGE = (
+    "Maaf, saya hanya bisa menjawab pertanyaan tentang paper di korpus ini; tidak ada informasi tentang "
+    "hal itu di dokumen. / Sorry, I can only answer questions about the papers in this corpus; the "
+    "documents contain no information about this."
+)
 
 
 def format_chunk(i: int, hit: dict, paper_titles: dict) -> str:
@@ -56,6 +62,9 @@ class GraphRAGEngine:
         """
         print(f"\n[1] Routing query: '{user_query}'")
         routing = self.router.route(user_query)
+        if routing.intent == "off_topic":
+            print("[2] Off-topic question: refused without retrieval")
+            return OFF_TOPIC_MESSAGE
 
         # Konteks dikumpulkan per ASAL-USUL (graph / teks mentah / ringkasan komunitas) supaya prompt
         # jawaban bisa membungkus tiap jenis dengan tag sendiri dan menandainya sebagai DATA

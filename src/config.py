@@ -206,7 +206,8 @@ class DedupDecision(BaseModel):
 
 # --- Schema for Query Routing ---
 
-INTENT_TYPES = Literal["entity", "thematic", "counting", "structural"]
+# off_topic: jelas bukan pertanyaan tentang riset/paper -> engine menolak tanpa retrieval & tanpa LLM kedua.
+INTENT_TYPES = Literal["entity", "thematic", "counting", "structural", "off_topic"]
 
 class QueryRouting(BaseModel):
     intent: INTENT_TYPES = Field(description="The classification of the user's query.")

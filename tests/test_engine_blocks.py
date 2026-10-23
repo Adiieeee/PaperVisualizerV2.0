@@ -135,3 +135,20 @@ def test_traversal_limits_are_server_constants_not_router_output():
     e.query("A?")
     # traversal mengambil semua relasi 2-hop; budget diterapkan reranker, dengan pertanyaan ASLI user
     assert seen == {"hops": 2, "rels": None, "budget": 150, "query": "A?"}
+
+
+def test_off_topic_refuses_without_retrieval_or_second_llm_call():
+    def boom(*a, **k):
+        raise AssertionError("retrieval must not run for off_topic")
+
+    rs = types.SimpleNamespace(resolve_entities=boom, search_chunks=boom, search_communities=boom)
+    e = _engine(QueryRouting(intent="off_topic"), resolver=rs)
+    from src.engine import OFF_TOPIC_MESSAGE
+    assert e.query("buatkan puisi tentang kucing") == OFF_TOPIC_MESSAGE
+    assert e.llm.calls == []
+
+
+def test_off_topic_message_counts_as_refusal_in_eval():
+    from evaluate import REFUSAL
+    from src.engine import OFF_TOPIC_MESSAGE
+    assert any(p in OFF_TOPIC_MESSAGE.lower() for p in REFUSAL)
