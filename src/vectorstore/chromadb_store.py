@@ -35,9 +35,17 @@ class ChromaStore:
 
     def add_community_summaries(self, summaries: List[Dict[str, str]], embeddings: List[List[float]]):
         """
-        Add community summaries to ChromaDB.
+        Replace ALL community summaries in ChromaDB with these.
         summaries is a list of dicts: {"community_id": "...", "summary": "..."}
+        Ids are 0..N-1 per build, so an upsert alone would leave a previous build's higher ids
+        behind. Only this build-derived collection is cleared, never `chunks`.
         """
+        old_ids = self.community_collection.get(include=[])["ids"]
+        if old_ids:
+            self.community_collection.delete(ids=old_ids)
+        if not summaries:
+            print("No community summaries to store (collection cleared).")
+            return
         ids = [str(s["community_id"]) for s in summaries]
         documents = [s["summary"] for s in summaries]
         
