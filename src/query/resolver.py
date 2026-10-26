@@ -7,7 +7,7 @@ from src.llm.embedding import EmbeddingClient
 from src.vectorstore.chromadb_store import ChromaStore
 from src.config import (
     CHUNK_MIN_SIMILARITY, COMMUNITY_MIN_SIMILARITY, RESOLVER_SIM_THRESHOLD, TOPIC_TERM_MIN_PAPERS,
-    TOPIC_TERM_MIN_SHARE, load_model_to_paper,
+    TOPIC_TERM_MIN_SHARE, load_model_to_paper, load_paper_metadata,
 )
 
 # Query words that signal the user wants the PAPER (not the model node): authors, affiliation,
@@ -77,6 +77,10 @@ def is_topic_only(name: str, topic_terms) -> bool:
 
 
 class QueryResolver:
+    # Defaults so a resolver built without __init__ (tests) behaves as if the corpus had no topic terms.
+    topic_terms = frozenset()
+    _topic_only = frozenset()
+
     def __init__(self, embed_client: EmbeddingClient, chroma_store: ChromaStore, graph: nx.Graph):
         self.embed = embed_client
         self.chroma = chroma_store
@@ -84,6 +88,10 @@ class QueryResolver:
         self._node_names = None   # lazy caches for embedding-based resolution
         self._node_embs = None
         self.model_to_paper = load_model_to_paper()  # auto-generated paper aliases (B2)
+        # Corpus topic guard: nodes named only by the topic ("Sycophancy") are never resolved, because the
+        # topic word is in nearly every question and pulled them into unrelated broad questions.
+        self.topic_terms = corpus_topic_terms(m.get("title") for m in load_paper_metadata().values())
+        self._topic_only = frozenset(n for n in graph.nodes() if is_topic_only(n, self.topic_terms))
 
     def resolve_entity(self, query: str, sim_threshold: Optional[float] = None,
                        context_query: str = None) -> Optional[str]:
@@ -117,7 +125,7 @@ class QueryResolver:
 
         # 1. Exact
         for node in nodes:
-            if node.lower() == ql:
+            if node.lower() == ql and node not in self._topic_only:
                 return node
 
         # 1.5. Partial Paper-title match. Users rarely mention a long title in full
@@ -133,7 +141,7 @@ class QueryResolver:
         best_contained = None
         for node in nodes:
             nl = node.lower()
-            if len(nl) < 3:
+            if len(nl) < 3 or node in self._topic_only:
                 continue
             if _contains_term(nl, ql):
                 if best_contained is None or len(nl) > len(best_contained.lower()):
@@ -145,6 +153,8 @@ class QueryResolver:
         # 3. Fuzzy whole-string
         best_match, highest = None, 0.0
         for node in nodes:
+            if node in self._topic_only:
+                continue
             r = difflib.SequenceMatcher(None, ql, node.lower()).ratio()
             if r > highest:
                 highest, best_match = r, node
@@ -180,7 +190,7 @@ class QueryResolver:
         spans = []
         for node in self.graph.nodes():
             nl = node.lower()
-            if len(nl) < 3:
+            if len(nl) < 3 or node in self._topic_only:
                 continue
             for m in re.finditer(_TERM_LEFT + re.escape(nl) + _TERM_RIGHT, ql):
                 spans.append((len(nl), m.start(), m.end(), node))
@@ -242,13 +252,12 @@ class QueryResolver:
     def _embedding_resolve(self, query: str, threshold: float) -> Optional[str]:
         """Nearest graph node to the query by local embedding similarity (no API quota)."""
         try:
+            probe = self.embedding_probe(query)
+            if probe is None:
+                return None
             if self._node_embs is None:
-                self._node_names = list(self.graph.nodes())
+                self._node_names = self.embedding_candidates()
                 self._node_embs = self.embed.embed_batch(self._node_names)
-
-            # Strip filler words so the entity dominates the query embedding.
-            tokens = [w for w in _WORD_RE.findall(query.lower()) if w not in _STOPWORDS]
-            probe = " ".join(tokens) if tokens else query
             qv = self.embed.embed_text(probe)
 
             best_i, best_sim = -1, -1.0
@@ -263,6 +272,25 @@ class QueryResolver:
         except Exception as e:
             print(f"[Resolver] embedding resolution failed: {e}")
         return None
+
+    def embedding_probe(self, query: str) -> Optional[str]:
+        """Layer-4 probe: the query without filler words, so the entity dominates its embedding. Topic terms
+        are stripped too; when nothing but the topic is left, None (nothing specific to match)."""
+        q = query.strip().strip("?.!,")
+        tokens = [w for w in _WORD_RE.findall(q.lower()) if w not in _STOPWORDS]
+        content = [w for w in tokens if w not in self.topic_terms]
+        if tokens and not content:
+            return None
+        return " ".join(content) if content else q
+
+    def embedding_candidates(self) -> List[str]:
+        """Nodes layer 4 may return (topic-only nodes excluded)."""
+        return [n for n in self.graph.nodes() if n not in self._topic_only]
+
+    def mentions_topic(self, query: str) -> bool:
+        """True when the query contains a corpus topic term (e.g. "sycophancy")."""
+        ql = query.lower()
+        return any(_contains_term(t, ql) for t in self.topic_terms)
 
     def search_chunks(self, query: str, top_k: int = 5) -> List[dict]:
         """Vector search on raw chunks as a fallback: [{text, doc_id, score}] above CHUNK_MIN_SIMILARITY."""

@@ -97,12 +97,13 @@ def build_temp_store(client, out_dir):
 
 def best_embedding_match(resolver, query):
     """Nearest (node, sim) at layer 4, with the same probe as resolver._embedding_resolve."""
+    probe = resolver.embedding_probe(query)
+    if probe is None:
+        return None, 0.0
     if resolver._node_embs is None:
-        resolver._node_names = list(resolver.graph.nodes())
+        resolver._node_names = resolver.embedding_candidates()
         resolver._node_embs = np.array(resolver.embed.embed_batch(resolver._node_names))
-    q = query.strip().strip("?.!,")
-    tokens = [w for w in R._WORD_RE.findall(q.lower()) if w not in R._STOPWORDS]
-    qv = np.array(resolver.embed.embed_text(" ".join(tokens) if tokens else q))
+    qv = np.array(resolver.embed.embed_text(probe))
     sims = np.asarray(resolver._node_embs) @ qv
     i = int(sims.argmax())
     return resolver._node_names[i], float(sims[i])
@@ -141,7 +142,7 @@ def calibrate_resolver(client, store, graph):
             continue
         node, sim = best_embedding_match(resolver, c["q"])
         neg.append({"id": c["id"], "node": node, "sim": round(sim, 3)})
-        print(f"    {c['id']:20} sim={sim:.3f} -> {node[:60]!r}")
+        print(f"    {c['id']:20} sim={sim:.3f} -> {(node or '-')[:60]!r}")
     for t in RESOLVER_GRID:
         hits = [n["id"] for n in neg if n["sim"] >= t]
         print(f"  T={t:.2f}  salah cocok (negatif terpetakan ke node): {len(hits)} {hits}")
