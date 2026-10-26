@@ -38,7 +38,7 @@ def _truncate(s: str, n: int = 28) -> str:
     return s if len(s) <= n else s[: n - 1] + "…"
 
 
-# ── Injected right-panel UI (DESIGN_REFERENCE §7). Kept as module constants so the
+# ── Injected right-panel UI (DESIGN_REFERENCE §8). Kept as module constants so the
 #    braces don't fight with Python f-strings. Data is passed in via a GR_DATA JSON blob. ──
 _PANEL_CSS = """
 * { box-sizing: border-box; }
@@ -556,7 +556,7 @@ _PANEL_JS = """
     if (params.nodes.length) { highlightNode(params.nodes[0]); }
   });
 
-  // --- Edge Filters (§7.3): dropdown dims all edges except the chosen relation type ---
+  // --- Edge Filters (§8.3): dropdown dims all edges except the chosen relation type ---
   var currentEdgeFilter = "all";
 
   function resetEdgeFilterUI() {
@@ -630,14 +630,14 @@ _PANEL_JS = """
     help.addEventListener("click", function (e) { e.preventDefault(); e.stopPropagation(); });
   }
 
-  // --- Network Insights (§7.2): top-5 by degree per category, DOM built lazily on open ---
+  // --- Network Insights (§8.2): top-5 by degree per category, DOM built lazily on open ---
   function esc(s) {
     return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;")
                     .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   }
 
-  // Canonical "select a node" action, shared by Search (§8.3) and Network Insights (§7.2):
-  // reflect it in the search bar, glow it, zoom to it. (§9 Info Panel will hook in here.)
+  // Canonical "select a node" action, shared by Search (§9.3) and Network Insights (§8.2):
+  // reflect it in the search bar, glow it, open the Info Panel (§10), zoom to it.
   window.executeSearchSelection = function (id) {
     var det = document.getElementById("gr-insights-details");
     if (det) det.removeAttribute("open");
@@ -707,7 +707,7 @@ _PANEL_JS = """
     });
   }
 
-  // --- Path Discovery (§7.4): BFS shortest path on the undirected, unweighted graph ---
+  // --- Path Discovery (§8.4): BFS shortest path on the undirected, unweighted graph ---
   function bfsPath(a, b) {
     if (a === b) return [a];
     var visited = {}; visited[a] = true;
@@ -799,7 +799,7 @@ _PANEL_JS = """
     if (el) el.addEventListener("keydown", function (e) { if (e.key === "Enter") runPathDiscovery(); });
   });
 
-  // --- Search (§8): case-insensitive substring match on node ids, ranked, top 50 ---
+  // --- Search (§9): case-insensitive substring match on node ids, ranked, top 50 ---
   var searchInput = document.getElementById("gr-search-input");
   var searchDropdown = document.getElementById("gr-search-dropdown");
   var searchClear = document.getElementById("gr-search-clear");
@@ -882,7 +882,7 @@ _PANEL_JS = """
     if (s && !s.contains(e.target)) hideSearchDropdown();
   });
 
-  // --- Info Panel (§9): node detail (right side), opens on any single-node highlight ---
+  // --- Info Panel (§10): node detail (left side), opens on any single-node highlight ---
   function infoTag(id) {
     return '<span class="gr-info-tag" data-id="' + encodeURIComponent(id) +
            '" title="' + esc(id) + '">' + esc(id) + '</span>';
@@ -946,7 +946,7 @@ _PANEL_JS = """
     hideSearchDropdown();
   }
 
-  // --- Chatbot (§10): posts to /api/chat (needs server.py; degrades gracefully on file://) ---
+  // --- Chatbot (§11): posts to /api/chat (needs server.py; degrades gracefully on file://) ---
   var chatEl = document.getElementById("gr-chat");
   var chatHeader = document.getElementById("gr-chat-header");
   var chatMsgs = document.getElementById("gr-chat-messages");
@@ -1084,7 +1084,7 @@ class GraphVisualizer:
     }
     DEFAULT_EDGE_COLOR = "#475569"
 
-    # Indonesian type descriptions for the legend "?" tooltip (DESIGN_REFERENCE §7.1).
+    # Indonesian type descriptions for the legend "?" tooltip (DESIGN_REFERENCE §8.1).
     TYPE_DESCRIPTIONS = {
         "Paper": "Makalah penelitian akademik (sumber utama).",
         "Author": "Penulis dari sebuah paper.",
@@ -1097,7 +1097,7 @@ class GraphVisualizer:
         "Task": "Masalah yang ingin diselesaikan (mis. klasifikasi citra).",
     }
 
-    # Indonesian edge descriptions for the Edge Filters box (DESIGN_REFERENCE §7.3),
+    # Indonesian edge descriptions for the Edge Filters box (DESIGN_REFERENCE §8.3),
     # adapted to our relation types (config.RELATION_TYPES + build-time variant_of).
     EDGE_DESCRIPTIONS = {
         "written_by": "<b>[Paper &rarr; Author]</b> Penulis dari sebuah paper.",
@@ -1130,7 +1130,7 @@ class GraphVisualizer:
 
     def _insights(self, top_n: int = 5) -> dict:
         """Top-N nodes by real-relationship degree (mentioned_in excluded, consistent with
-        get_counting_stats) per category (DESIGN_REFERENCE §7.2)."""
+        get_counting_stats) per category (DESIGN_REFERENCE §8.2)."""
         result = {}
         for t in ("Method", "Dataset", "Metric", "Author"):
             scored = []
@@ -1207,7 +1207,7 @@ class GraphVisualizer:
         )
 
     def build_html(self) -> str:
-        """Build the full self-contained HTML string (DESIGN_REFERENCE Phase B + C)."""
+        """Build the full self-contained HTML string (DESIGN_REFERENCE §1)."""
         net = Network(
             height="100vh", width="100%",
             bgcolor="#080c1a", font_color="#e2e8f0",

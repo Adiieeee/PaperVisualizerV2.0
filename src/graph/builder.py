@@ -29,7 +29,7 @@ class GraphBuilder:
     def add_knowledge_with_provenance(self, knowledge_items: List[Tuple[str, ExtractedKnowledge]]):
         """
         Phase A: build the graph AND anchor every entity to the Paper node of the
-        document it was extracted from, so nothing floats unconnected (DESIGN_REFERENCE §11).
+        document it was extracted from, so nothing floats unconnected.
 
         knowledge_items: list of (chunk_id, ExtractedKnowledge); doc_id is derived from
         chunk_id. This only shapes graph STRUCTURE — the query pipeline, dedup, and vector
