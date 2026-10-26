@@ -34,6 +34,7 @@
   {"id": "theme-mitigation",    "q": "Pendekatan apa saja untuk mengurangi sycophancy?",            "category": "thematic",   "intent": "thematic",   "expected_contains": ["mitigat"]},
   {"id": "theme-trust",         "q": "Bagaimana sycophancy memengaruhi kepercayaan pengguna?",      "category": "thematic",   "intent": "thematic",   "expected_contains": ["trust"]},
   {"id": "theme-social",        "q": "Apa itu social sycophancy dan bagaimana mengukurnya?",        "category": "thematic",   "intent": "thematic",   "expected_contains": ["social"]},
+  {"id": "theme-paraphrase-id", "q": "Bagaimana cara mengurangi sikap menjilat pada chatbot?",      "category": "thematic",   "intent": "thematic",   "expected_contains": ["DPO"]},
 
   {"id": "resolve-paraphrase",  "q": "benchmark sikap menjilat pada model medis",                   "category": "resolution", "intent": "entity", "expected_contains": ["EchoBench"]},
   {"id": "resolve-paraphrase2", "q": "evaluasi sycophancy pada LLM",                                "category": "resolution", "intent": "entity", "expected_contains": ["ycEval"]},

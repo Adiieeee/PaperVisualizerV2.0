@@ -54,10 +54,11 @@ RESOLVER_SIM_THRESHOLD = 0.62
 # Jalur vektor (fallback chunk + thematic): hasil di bawah ambang dibuang; bila semuanya gugur, engine
 # menolak tanpa panggilan LLM. bge-m3 (kalibrasi 2026-10-23, cosine top-1): fallback relevan >= 0.563,
 # luar domain jelas <= 0.466 (kopi, cuaca, terjemahan); ResNet/ImageNet 0.529 sengaja lolos (ditolak oleh
-# aturan prompt jawaban). Ringkasan komunitas: tema >= 0.557, luar domain <= 0.405.
-# Lihat scripts/calibrate_retrieval.py.
+# aturan prompt jawaban). Ringkasan komunitas (berbahasa Inggris): tema >= 0.557, tetapi parafrase Indonesia
+# yang sah ("cara mengurangi sikap menjilat pada chatbot") hanya 0.485-0.499 -> 0.50 menolaknya (e2e
+# 2026-10-26); luar domain <= 0.405 (ResNet), resep 0.354. Lihat scripts/calibrate_retrieval.py.
 CHUNK_MIN_SIMILARITY = 0.50
-COMMUNITY_MIN_SIMILARITY = 0.50
+COMMUNITY_MIN_SIMILARITY = 0.44
 
 # --- Community (graph-only; tidak menyentuh vector store chunk) ---
 # Louvain dijalankan atas graf ko-okurensi: dua entitas terhubung bila disebut di chunk yang sama.
