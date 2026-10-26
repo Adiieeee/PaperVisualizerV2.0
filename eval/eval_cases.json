@@ -48,6 +48,18 @@
   {"id": "adv-multi-entity",    "q": "Apa institusi penulis paper SycEval dan paper ELEPHANT?",     "category": "adversarial", "intent": "entity", "expected_contains": ["Stanford", "Carnegie Mellon"]},
   {"id": "adv-multi-limit",     "q": "Bandingkan keterbatasan SycEval dan ELEPHANT.",               "category": "adversarial", "intent": "entity", "expected_contains": ["synthetic rebuttals", "English"]},
   {"id": "adv-3hop",            "q": "Institusi apa yang menaungi penulis benchmark yang memakai dataset hh-rlhf?", "category": "adversarial", "intent": "entity", "expected_contains": ["Carnegie Mellon"]},
+
+  {"id": "hold-impact",         "q": "Apa dampak sycophancy terhadap pengguna?",                    "category": "holdout",    "intent": "entity", "expected_any": ["trust"]},
+  {"id": "hold-measure",        "q": "Bagaimana cara mengukur sycophancy?",                         "category": "holdout",    "intent": "entity", "expected_any": ["benchmark"]},
+  {"id": "hold-cause",          "q": "Mengapa model bahasa menunjukkan sycophancy?",                "category": "holdout",    "intent": "entity", "expected_any": ["training"]},
+  {"id": "hold-multiturn",      "q": "Bagaimana sycophancy muncul dalam percakapan multi-turn?",    "category": "holdout",    "intent": "entity", "expected_any": ["multi-turn", "conversation"]},
+  {"id": "hold-medical",        "q": "Apa risiko sycophancy di bidang medis?",                      "category": "holdout",    "intent": "entity", "expected_any": ["medic", "clinical"]},
+  {"id": "hold-strategy",       "q": "Strategi apa yang efektif melawan sycophancy?",               "category": "holdout",    "intent": "entity", "expected_any": ["DPO", "steering", "fine-tun", "perspective", "prompt"]},
+  {"id": "hold-entity-elephant", "q": "Bagaimana ELEPHANT mengukur sycophancy?",                     "category": "holdout",    "intent": "entity", "expected_node": "ELEPHANT"},
+  {"id": "hold-entity-syceval", "q": "Apa temuan SycEval tentang sycophancy?",                      "category": "holdout",    "intent": "entity", "expected_node": "SycEval"},
+  {"id": "hold-ctrl-rate",      "q": "Apa itu sycophancy rate?",                                    "category": "holdout",    "intent": "entity", "expected_node": "Sycophancy Rate"},
+  {"id": "hold-ctrl-social",    "q": "Bagaimana social sycophancy diukur?",                         "category": "holdout",    "intent": "entity", "expected_node": "Social Sycophancy"},
+  {"id": "hold-ctrl-claude",    "q": "Apa temuan tentang sycophancy pada Claude Sonnet 3.7?",       "category": "holdout",    "intent": "entity", "expected_node": "Claude Sonnet 3.7"},
   {"id": "adv-subjective",      "q": "Model mana yang paling baik menurut paper-paper ini?",        "category": "adversarial", "intent": "entity", "expected_refuse": true},
   {"id": "adv-negation",        "q": "Dataset apa yang TIDAK pernah dipakai oleh SycEval?",         "category": "adversarial", "intent": "entity", "expected_refuse": true},
 
