@@ -4,22 +4,22 @@ from collections import Counter
 from pyvis.network import Network
 import networkx as nx
 
-# pyvis menyisipkan Bootstrap dari CDN (dengan SRI) walau cdn_resources="in_line". Panel kita tidak
-# memakainya, dan itu satu-satunya dependensi eksternal saat runtime — melepasnya membuat halaman
-# benar-benar offline (DESIGN_REFERENCE §1.2) dan memungkinkan CSP tanpa origin eksternal.
+# pyvis inserts Bootstrap from a CDN (with SRI) even with cdn_resources="in_line". Our panel does not
+# use it, and it is the only external dependency at runtime — removing it makes the page truly
+# offline (DESIGN_REFERENCE §1.2) and allows a CSP without external origins.
 _BOOTSTRAP_TAG_RE = re.compile(
     r"<(?:link|script)\b[^>]*cdn\.jsdelivr\.net/npm/bootstrap[^>]*>(?:\s*</script\s*>)?",
     re.IGNORECASE,
 )
 _EXTERNAL_REF_RE = re.compile(r"""<(?:script|link|img|iframe)\b[^>]*\b(?:src|href)\s*=\s*["']https?://""", re.IGNORECASE)
 
-# Karakter yang tidak boleh muncul mentah di dalam <script>. Ditulis sebagai escape JSON (\\uXXXX)
-# yang dibangun via chr(): "<" / "<!--" bisa memecah blok skrip, U+2028/2029 memecah literal JS lama.
+# Characters that must not appear raw inside <script>. Written as JSON escapes (\\uXXXX)
+# built via chr(): "<" / "<!--" can break out of the script block, U+2028/2029 break old JS literals.
 _SCRIPT_UNSAFE_RE = re.compile("[<>&" + chr(0x2028) + chr(0x2029) + "]")
 
 
 def _json_for_script(obj) -> str:
-    """JSON yang aman ditempel di dalam <script>: <, >, &, U+2028, U+2029 -> escape JSON (\\uXXXX)."""
+    """JSON that is safe to embed inside <script>: <, >, &, U+2028, U+2029 -> JSON escape (\\uXXXX)."""
     raw = json.dumps(obj, ensure_ascii=False)
     return _SCRIPT_UNSAFE_RE.sub(lambda m: f"{chr(92)}u{ord(m.group(0)):04x}", raw)
 
@@ -42,8 +42,8 @@ def _truncate(s: str, n: int = 28) -> str:
 #    braces don't fight with Python f-strings. Data is passed in via a GR_DATA JSON blob. ──
 _PANEL_CSS = """
 * { box-sizing: border-box; }
-/* Pengganti bagian Bootstrap yang dulu memberi tampilan ini (CDN dilepas: DESIGN_REFERENCE §1.2
-   "offline-ready", canvas mengisi seluruh viewport). Judul pyvis selalu kosong -> disembunyikan. */
+/* Replacement for the part of Bootstrap that used to provide this look (CDN removed: DESIGN_REFERENCE §1.2
+   "offline-ready", the canvas fills the whole viewport). The pyvis title is always empty -> hidden. */
 html, body { margin: 0; }
 body { line-height: 1.5; }
 body > center { display: none; }
@@ -571,8 +571,8 @@ _PANEL_JS = """
     var box = document.getElementById("gr-edge-desc");
     if (!box) return;
     if (rel === "all") { box.style.display = "none"; box.innerHTML = ""; return; }
-    // EDGE_DESCRIPTIONS = HTML tepercaya dari konstanta Python; fallback `rel` berasal dari file
-    // graph (data), jadi WAJIB di-escape.
+    // EDGE_DESCRIPTIONS = trusted HTML from Python constants; the fallback `rel` comes from the graph
+    // file (data), so it MUST be escaped.
     box.innerHTML = (GR_DATA.EDGE_DESCRIPTIONS && GR_DATA.EDGE_DESCRIPTIONS[rel]) || esc(rel);
     box.style.display = "block";
   }
@@ -671,9 +671,9 @@ _PANEL_JS = """
       container.appendChild(grp);
     });
 
-    // Top Entity Families — varian ber-versi yang ditautkan lewat `variant_of`.
-    // Bisa Method / Dataset / Metric / Task tergantung korpus; section ini MENYEMBUNYIKAN
-    // DIRI kalau korpus tidak punya entitas berversi sama sekali.
+    // Top Entity Families — versioned variants linked through `variant_of`.
+    // Can be Method / Dataset / Metric / Task depending on the corpus; this section HIDES
+    // ITSELF if the corpus has no versioned entities at all.
     var FAM = GR_DATA.FAMILIES || [];
     if (FAM.length) {
       var fg = document.createElement("div");
@@ -958,10 +958,10 @@ _PANEL_JS = """
     chatHeader.addEventListener("click", function () { chatEl.classList.toggle("collapsed"); });
   }
 
-  // KEAMANAN: jawaban LLM berasal dari dokumen tak tepercaya. Urutan di bawah TIDAK BOLEH diubah:
-  // escape SEMUA HTML dulu, baru tambahkan tag whitelist (tanpa link/gambar/atribut). Tag yang
-  // dihasilkan hanya membungkus teks yang sudah ter-escape, jadi tidak ada jalan menuju XSS.
-  // Jangan tambahkan fitur (link, gambar, HTML mentah) di sini tanpa sanitizer dan tes di tests/test_frontend.py.
+  // SECURITY: LLM answers come from untrusted documents. The order below MUST NOT change:
+  // escape ALL HTML first, then add whitelisted tags (no links/images/attributes). The tags
+  // produced only wrap already-escaped text, so there is no path to XSS.
+  // Do not add features (links, images, raw HTML) here without a sanitizer and tests in tests/test_frontend.py.
   function renderMarkdown(raw) {
     var html = String(raw).replace(/[&<>"']/g, function(m) {
       return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m];
@@ -1052,8 +1052,8 @@ class GraphVisualizer:
     NODE_COLORS = {
         "Paper": "#818cf8",       # Indigo-violet
         "Author": "#f87171",      # Soft coral-red
-        "Institution": "#a89684", # Warm taupe — netral, tidak bentrok dgn Paper/Metric
-                                  # (sky blue lama: ΔE 6.7 vs Metric cyan = nyaris tak terbedakan)
+        "Institution": "#a89684", # Warm taupe — neutral, does not clash with Paper/Metric
+                                  # (the old sky blue: ΔE 6.7 vs Metric cyan = nearly indistinguishable)
         "Method": "#4ade80",      # Bright green
         "Dataset": "#fbbf24",     # Amber gold
         "Metric": "#22d3ee",      # Cyan
@@ -1080,7 +1080,7 @@ class GraphVisualizer:
         "evaluated_on": "#fcd34d",
         "related_to": "#94a3b8",          # slate-400: generic link kept when salvaging LLM output
         "mentioned_in": "#475569",  # slate-600: recessive provenance edge on dark bg
-        "variant_of": "#64748b",    # slate-500: tautan varian -> keluarga (build-time)
+        "variant_of": "#64748b",    # slate-500: variant -> family link (build-time)
     }
     DEFAULT_EDGE_COLOR = "#475569"
 
@@ -1148,10 +1148,10 @@ class GraphVisualizer:
 
     def _entity_families(self, top_n: int = 6) -> list:
         """
-        Keluarga entitas (varian ber-versi yang ditautkan lewat `variant_of`), diurutkan
-        berdasarkan jangkauan lintas-paper. Domain-agnostik: bisa berupa Method, Dataset,
-        Metric, atau Task — tergantung korpus. Kosong bila korpus tidak memakai penomoran versi,
-        dan panel akan menyembunyikan diri.
+        Entity families (versioned variants linked via `variant_of`), ordered
+        by cross-paper reach. Domain-agnostic: can be Method, Dataset,
+        Metric, or Task — depending on the corpus. Empty if the corpus uses no version numbering,
+        and the panel hides itself.
         """
         papers = {n for n, d in self.graph.nodes(data=True) if d.get("type") == "Paper"}
         members = {}
