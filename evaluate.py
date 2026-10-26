@@ -50,7 +50,7 @@ def retrieval_context(case, resolver, traversal, analytics, reranker=None):
         return " ; ".join(f"{n} ({c} papers)" for n, _ps, c in bridges), None
     if intent == "thematic":
         return " ".join(resolver.search_communities(case["q"])), None
-    # entity — cerminkan engine: bisa >1 entitas (roadmap 1.2), budget konteks dibagi
+    # entity — mirrors the engine: can be >1 entity (roadmap 1.2), with a per-entity context budget (SINGLE/MULTI)
     nodes = resolver.resolve_entities(case["q"], context_query=case["q"])
     if nodes:
         budget = config.ENTITY_BUDGET_SINGLE if len(nodes) == 1 else config.ENTITY_BUDGET_MULTI

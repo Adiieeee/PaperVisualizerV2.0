@@ -12,9 +12,9 @@ your browser. Requires a completed build (data/processed/graph.graphml).
 Note: each chat message makes 2 LLM calls (Gemini, or Groq once Gemini's daily quota is
 gone), so it consumes daily free-tier quota — just like the CLI query. Budget stays $0 (local server, local embeddings).
 
-Keamanan (lihat docs/SECURITY.md): server ini untuk pemakaian LOKAL. Host allow-list tetap, guard
-request (ukuran/Content-Type/Origin/rate limit/concurrency), header keamanan + CSP berbasis hash,
-error generik ke klien. Jangan di-expose ke internet.
+Security (see docs/SECURITY.md): this server is for LOCAL use. Fixed Host allow-list, request guards
+(size/Content-Type/Origin/rate limit/concurrency), security headers + hash-based CSP,
+generic errors to the client. Do not expose it to the internet.
 """
 import logging
 import os
@@ -74,15 +74,15 @@ def allowed_origins(port: int = PORT) -> list:
 
 def create_app(engine, html: str = _NOT_BUILT_HTML, *, limiter=None, gate=None) -> FastAPI:
     """
-    Bangun aplikasi. `engine` cukup punya `.query(str) -> str`. Dipisah dari main() supaya bisa dites
-    tanpa memuat torch/graph. `limiter`/`gate` bisa disuntik oleh tes.
+    Build the app. `engine` only needs a `.query(str) -> str`. Kept separate from main() so it can be tested
+    without loading torch/the graph. `limiter`/`gate` can be injected by tests.
     """
-    # docs/redoc/openapi dimatikan: tidak dipakai UI dan tidak perlu terlihat.
+    # docs/redoc/openapi are disabled: the UI does not use them and they need not be visible.
     app = FastAPI(title="GraphRAG Explorer", docs_url=None, redoc_url=None, openapi_url=None)
 
     @app.exception_handler(RequestValidationError)
     async def _validation_error(request, exc):
-        # Pesan tetap (tidak memantulkan input) dalam bentuk {"answer": ...} yang dipahami UI.
+        # Fixed message (does not reflect the input) in the {"answer": ...} shape the UI understands.
         return JSONResponse(status_code=422, content={"answer": MSG_INVALID})
 
     @app.get("/", response_class=HTMLResponse)
@@ -100,14 +100,14 @@ def create_app(engine, html: str = _NOT_BUILT_HTML, *, limiter=None, gate=None) 
         except EmptyResponseError:
             status, body = 503, {"answer": MSG_EMPTY}
         except Exception:  # never crash the endpoint; never leak internals to the client
-            logger.exception("chat failed")  # detail + traceback hanya di log server
+            logger.exception("chat failed")  # details + traceback only in the server log
             status, body = 503, {"answer": MSG_ERROR}
-        # Satu baris log per chat, TANPA teks pertanyaan/jawaban (privasi).
+        # One log line per chat, WITHOUT the question/answer text (privacy).
         logger.info("chat status=%s latency_ms=%d", status, (time.monotonic() - start) * 1000)
         return JSONResponse(status_code=status, content=body)
 
-    # Urutan: yang ditambah TERAKHIR = lapisan terluar. SecurityHeaders paling luar supaya header
-    # juga terpasang di penolakan 400/403/413/415/429 dari lapisan di dalamnya.
+    # Order: the one added LAST = the outermost layer. SecurityHeaders is outermost so the headers
+    # are also attached to the 400/403/413/415/429 rejections from the layers inside it.
     app.add_middleware(
         ChatGuard,
         path="/api/chat",
@@ -130,7 +130,7 @@ def main():
     for name in ("graphrag.server", "graphrag.security"):
         logging.getLogger(name).setLevel(logging.INFO)
 
-    # Validasi konfigurasi hanya di server (evaluate.py mode retrieval tidak butuh key).
+    # Configuration is validated only in the server (evaluate.py retrieval mode does not need a key).
     if not config.GEMINI_API_KEY:
         print("[Error] GEMINI_API_KEY belum diisi. Salin .env.example menjadi .env dan isi key Anda.")
         return
@@ -138,7 +138,7 @@ def main():
         print(f"[Error] {GRAPH_PATH} not found. Run 'python main.py build' first.")
         return
 
-    # Import berat (torch, chromadb) ditunda ke sini supaya `import server` cepat dan bisa dites.
+    # Heavy imports (torch, chromadb) are deferred to here so `import server` is fast and testable.
     from src.engine import GraphRAGEngine
     from src.graph.visualizer import GraphVisualizer
 

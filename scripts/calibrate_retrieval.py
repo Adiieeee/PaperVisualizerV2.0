@@ -1,11 +1,11 @@
 """
-Kalibrasi CHUNK_MIN_SIMILARITY / COMMUNITY_MIN_SIMILARITY (ambang relevansi jalur vektor), TANPA kuota LLM.
+Calibrate CHUNK_MIN_SIMILARITY / COMMUNITY_MIN_SIMILARITY (the relevance thresholds of the vector paths), WITHOUT LLM quota.
 
-Untuk setiap kasus eval yang memakai jalur vektor (thematic -> ringkasan komunitas; entity yang tidak
-ter-resolve -> fallback chunk) dicetak cosine top-1 dan top-k. Kasus `expected_empty` adalah negatif
-(semua hasil harus gugur); kasus yang tidak `expected_refuse` adalah positif (top-1 harus lolos).
-Ambang yang aman berada di antara negatif tertinggi dan positif terendah. Pertanyaan riset yang tidak ada
-di korpus (mis. ResNet) sengaja tidak dihitung negatif: itu urusan aturan prompt jawaban.
+For every eval case that uses a vector path (thematic -> community summaries; an unresolved entity ->
+chunk fallback) the top-1 and top-k cosine are printed. `expected_empty` cases are negatives
+(all hits must fall away); cases without `expected_refuse` are positives (top-1 must pass).
+A safe threshold lies between the highest negative and the lowest positive. Research questions that are not in
+the corpus (e.g. ResNet) are deliberately not counted as negatives: that is the job of the answer prompt's rules.
 
 Usage:
     PYTHONUTF8=1 python -m scripts.calibrate_retrieval
@@ -34,9 +34,9 @@ def main():
         if c["intent"] == "thematic":
             path = "community"
         elif c["intent"] == "entity":
-            with contextlib.redirect_stdout(io.StringIO()):  # resolver mencetak log per lapis
+            with contextlib.redirect_stdout(io.StringIO()):  # the resolver prints a log per layer
                 if resolver.resolve_entities(c["q"], context_query=c["q"]):
-                    continue  # ter-resolve ke node: jalur graph, ambang tidak berlaku
+                    continue  # resolved to a node: graph path, the threshold does not apply
             path = "chunk"
         else:
             continue
@@ -45,7 +45,7 @@ def main():
         elif not c.get("expected_refuse") and not c.get("e2e_only"):
             label = "POS"
         else:
-            label = "---"  # refusal tanpa expected_empty: informatif saja
+            label = "---"  # refusal without expected_empty: informational only
         emb = embed.embed_text(c["q"])
         res = chroma.search_chunks(emb, 5) if path == "chunk" else chroma.search_communities(emb, 3)
         scores = [l2_to_cosine(d) for d in res["distances"][0]]

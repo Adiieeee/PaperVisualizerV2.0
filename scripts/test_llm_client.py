@@ -1,14 +1,14 @@
 """
-Tes manual (pakai jaringan + kuota) untuk src/llm/llm_client.py. BUKAN bagian dari pytest
-(pytest.ini: testpaths = tests). Jalankan: PYTHONUTF8=1 python -m scripts.test_llm_client
-Total ~4 request kalau Groq belum dikonfigurasi (3 Gemini + 1 key palsu), ~6 kalau sudah (+2 Groq).
+Manual test (uses the network + quota) for src/llm/llm_client.py. NOT part of pytest
+(pytest.ini: testpaths = tests). Run: PYTHONUTF8=1 python -m scripts.test_llm_client
+About 4 requests in total if Groq is not configured (3 Gemini + 1 fake key), about 6 if it is (+2 Groq).
 """
 import logging
 
 from pydantic import BaseModel
 
 from src.config import ExtractedKnowledge, GEMINI_MODEL, GROQ_API_KEY, GROQ_MODEL
-# llm_client harus di-import sebelum litellm: ia yang mematikan unduhan cost map dari GitHub.
+# llm_client must be imported before litellm: it is what disables the cost map download from GitHub.
 from src.llm.llm_client import LLMQuotaError, build_router, call_llm
 
 import litellm
@@ -40,7 +40,7 @@ EXTRACT_MESSAGES = [{"role": "user", "content": (
 
 
 class _RequestSpy(CustomLogger):
-    """Catat KUNCI generationConfig yang dikirim ke Gemini (bukan URL: URL Gemini memuat key)."""
+    """Record the generationConfig KEYS sent to Gemini (not the URL: the Gemini URL contains the key)."""
 
     def __init__(self):
         self.gen_config_keys = []
@@ -53,8 +53,8 @@ class _RequestSpy(CustomLogger):
 
 
 class _GeminiDailyQuotaRouter:
-    """Router asli, tapi panggilan ke Gemini (alias dedup/general) dibuat gagal dengan 429 kuota
-    HARIAN tanpa request sungguhan. Panggilan ke Groq (general_backup) tetap sungguhan."""
+    """The real router, but calls to Gemini (alias dedup/general) are made to fail with a DAILY quota 429
+    without a real request. Calls to Groq (general_backup) are still real."""
 
     def __init__(self, real):
         self.real = real
@@ -91,8 +91,8 @@ def test_3_schema_fallback_groq():
     if not GROQ_READY:
         print("[3] DILEWATI: GROQ_API_KEY/GROQ_MODEL belum diisi di .env")
         return
-    # Paksa fallback ke Groq tanpa menghabiskan kuota Gemini. mock_testing_fallbacks tidak dipakai
-    # lagi: fallback bukan lagi milik Router, melainkan call_llm (hanya saat kuota harian habis).
+    # Force the fallback to Groq without using up the Gemini quota. mock_testing_fallbacks is no longer used:
+    # the fallback is no longer the Router's, but call_llm's (only when the daily quota runs out).
     router = _GeminiDailyQuotaRouter(build_router())
     out, model = call_llm(
         MESSAGES,
@@ -104,7 +104,7 @@ def test_3_schema_fallback_groq():
 
 
 def test_4_dedup_tidak_fallback():
-    # alias dedup tidak boleh pindah ke Groq. Simulasikan Gemini gagal dengan key palsu.
+    # the dedup alias must not switch to Groq. Simulate a Gemini failure with a fake key.
     if not GROQ_READY:
         print("[4] catatan: Groq belum dikonfigurasi, jadi fallback memang tidak mungkin; "
               "tes ini lemah sampai .env diisi")
@@ -116,7 +116,7 @@ def test_4_dedup_tidak_fallback():
         print("[4] OK: LLMQuotaError (tanpa fallback)")
     except Exception as e:
         print("[4] OK: error tanpa fallback ->", type(e).__name__)
-    # Dan saat kuota HARIAN Gemini habis pun dedup tetap berhenti (tanpa request sungguhan).
+    # And even when Gemini's DAILY quota runs out, dedup still stops (without a real request).
     try:
         call_llm(MESSAGES, alias="dedup", router=_GeminiDailyQuotaRouter(build_router()))
         print("[4b] GAGAL: dedup seharusnya LLMQuotaError, bukan sukses lewat Groq")
@@ -125,7 +125,7 @@ def test_4_dedup_tidak_fallback():
 
 
 def test_5_schema_extraction():
-    # Skema produksi yang paling berisiko: nested $defs, Literal enum, Optional ber-default.
+    # The riskiest production schema: nested $defs, Literal enum, Optional with a default.
     out, model = call_llm(EXTRACT_MESSAGES, alias="general", schema=ExtractedKnowledge)
     print(f"[5a] Gemini ExtractedKnowledge OK, model: {model}, "
           f"{len(out.entities)} entity / {len(out.relationships)} relasi")
@@ -150,5 +150,5 @@ if __name__ == "__main__":
               test_4_dedup_tidak_fallback, test_5_schema_extraction):
         try:
             t()
-        except Exception as e:  # satu tes gagal tidak boleh menyembunyikan hasil tes lain
+        except Exception as e:  # one failing test must not hide the results of the other tests
             print(f"[{t.__name__}] ERROR {type(e).__name__}: {str(e)[:500]}")

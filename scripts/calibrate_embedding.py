@@ -1,16 +1,16 @@
 """
-Kalibrasi ambang yang terikat model embedding, TANPA kuota LLM dan tanpa menyentuh artefak asli.
+Calibrate the thresholds tied to the embedding model, WITHOUT LLM quota and without touching the real artifacts.
 
-  (a) DEDUP_SIMILARITY_THRESHOLD — skor ulang semua pasangan di similarity_debug.csv (hasil build
-      terakhir, beserta keputusan LLM) dengan model kandidat: berapa kandidat yang akan dikirim ke LLM
-      dan berapa merge yang dikonfirmasi LLM tetap tertangkap, per ambang.
-  (b) RESOLVER_SIM_THRESHOLD + kualitas retrieval — Chroma SEMENTARA (chunk dari data/raw + ringkasan
-      komunitas dari Chroma sekarang) di-embed dengan model kandidat, lalu logika retrieval evaluate.py
-      dijalankan per ambang. Pertanyaan negatif/keamanan dicek: apakah lapis embedding salah memetakan.
-  (c) Waktu embedding seluruh chunk dan konsistensi vektor CPU vs GPU.
+  (a) DEDUP_SIMILARITY_THRESHOLD — re-score every pair in similarity_debug.csv (the last build's output,
+      with the LLM decisions) using the candidate model: how many candidates would be sent to the LLM
+      and how many LLM-confirmed merges are still caught, per threshold.
+  (b) RESOLVER_SIM_THRESHOLD + retrieval quality — a TEMPORARY Chroma (chunks from data/raw + community
+      summaries from the current Chroma) is embedded with the candidate model, then evaluate.py's retrieval
+      logic is run per threshold. Negative/security questions are checked: does the embedding layer map them wrongly.
+  (c) Embedding time for all chunks and CPU vs GPU vector consistency.
 
-Catatan: graph yang dipakai adalah graph sekarang (hasil dedup model lama); hasil akhir tetap harus
-diverifikasi dengan `python evaluate.py` setelah build ulang.
+Note: the graph used is the current graph (the result of dedup with the old model); the final result must still be
+verified with `python evaluate.py` after a rebuild.
 
 Usage:
     PYTHONUTF8=1 python -m scripts.calibrate_embedding --model BAAI/bge-m3 --revision <sha>
@@ -96,7 +96,7 @@ def build_temp_store(client, out_dir):
 
 
 def best_embedding_match(resolver, query):
-    """(node, sim) terdekat di lapis 4, dengan probe yang sama seperti resolver._embedding_resolve."""
+    """Nearest (node, sim) at layer 4, with the same probe as resolver._embedding_resolve."""
     if resolver._node_embs is None:
         resolver._node_names = list(resolver.graph.nodes())
         resolver._node_embs = np.array(resolver.embed.embed_batch(resolver._node_names))
@@ -130,7 +130,7 @@ def calibrate_resolver(client, store, graph):
         results.append({"T": t, "passed": passed, "failed": failed})
         print(f"  T={t:.2f}  {passed}/{len(graded)}  gagal: {failed}")
 
-    # Negatif: hanya yang TIDAK terselesaikan lapis 0-3 (lapis embedding dimatikan) yang relevan.
+    # Negatives: only those NOT resolved by layers 0-3 (the embedding layer switched off) matter.
     R.RESOLVER_SIM_THRESHOLD = 1.01
     print("\n  Pertanyaan negatif/keamanan yang jatuh ke lapis embedding (node terdekat, sim):")
     neg = []
@@ -148,7 +148,7 @@ def calibrate_resolver(client, store, graph):
     return {"retrieval": results, "negatives": neg}
 
 
-# ── (c) kecepatan + konsistensi device ──────────────────────────────────────────────────────
+# ── (c) speed + device consistency ────────────────────────────────────────────────────────────────
 
 def device_check(model, revision, chunks, n=32):
     from sentence_transformers import SentenceTransformer

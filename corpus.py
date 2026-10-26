@@ -1,18 +1,18 @@
 """
-Corpus manager — kelola korpus paper tanpa perlu build ulang.
+Corpus manager — manage paper corpora without rebuilding.
 
-Perintah:
-    python corpus.py list                  # daftar semua backup korpus
-    python corpus.py backup <nama-tema>    # simpan korpus aktif ke backups/<nama-tema>/
-    python corpus.py clear                 # kosongkan korpus aktif (siap diisi paper baru)
-    python corpus.py restore <nama-tema>   # pulihkan korpus dari backup (tanpa build ulang)
-    python corpus.py manifest              # tulis manifest integritas untuk korpus aktif (tanpa build ulang)
-    python corpus.py audit                 # pindai graph + chunk untuk teks mencurigakan (read-only)
+Commands:
+    python corpus.py list                  # list all corpus backups
+    python corpus.py backup <theme-name>   # save the active corpus to backups/<theme-name>/
+    python corpus.py clear                 # empty the active corpus (ready for new papers)
+    python corpus.py restore <theme-name>  # restore a corpus from a backup (no rebuild)
+    python corpus.py manifest              # write the integrity manifest for the active corpus (no rebuild)
+    python corpus.py audit                 # scan graph + chunks for suspicious text (read-only)
 
-Contoh alur ganti tema paper:
-    python corpus.py backup cnn-klasik     # simpan yang sekarang
-    python corpus.py clear                 # bersihkan
-    # ... taruh PDF baru di data/raw/ ...
+Example flow for switching the paper theme:
+    python corpus.py backup cnn-klasik     # save the current one
+    python corpus.py clear                 # clean up
+    # ... put the new PDFs in data/raw/ ...
     python main.py build
 """
 import argparse
@@ -28,21 +28,21 @@ PROCESSED = Path("data/processed")
 BACKUPS = Path("backups")
 EVAL_CASES = Path("eval/eval_cases.json")
 
-# File hasil build yang menentukan apakah korpus bisa dipakai tanpa build ulang.
-# manifest.json ikut di-backup: tanpa dia, engine tidak bisa memverifikasi korpus hasil restore.
-ESSENTIAL = ["graph.graphml", "paper_metadata.json", "manifest.json"]   # + folder chroma_db
+# Build output files that decide whether a corpus can be used without a rebuild.
+# manifest.json is backed up too: without it, the engine cannot verify a restored corpus.
+ESSENTIAL = ["graph.graphml", "paper_metadata.json", "manifest.json"]   # + the chroma_db folder
 
-# Nama backup dipakai sebagai nama folder (dan bisa memicu rmtree saat menimpa): tolak pemisah path / "..".
+# The backup name is used as a folder name (and can trigger rmtree when overwriting): reject path separators / "..".
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
 def _valid_name(name: str) -> bool:
     return bool(_NAME_RE.match(name)) and ".." not in name
-# extraction_cache.json: hasil LLM per chunk; dengan arsip ini korpus hasil restore bisa di-build tanpa
-# mengekstrak ulang. fact_embeddings.npz: cache embedding fakta untuk rerank graph; tanpa dia korpus hasil
-# restore tetap benar, hanya query pertama per node yang lambat.
+# extraction_cache.json: per-chunk LLM results; with this archive a restored corpus can be built without
+# re-extracting. fact_embeddings.npz: fact embedding cache for graph rerank; without it a restored corpus
+# is still correct, only the first query per node is slow.
 OPTIONAL = ["graph_visualization.html", "extraction_cache.json", "fact_embeddings.npz"]
-# Sengaja TIDAK di-backup: similarity_debug*.csv (log diagnostik, besar, tidak dipakai runtime)
+# Deliberately NOT backed up: similarity_debug*.csv (diagnostic log, large, not used at runtime)
 
 
 def _dir_size(path: Path) -> str:
@@ -57,7 +57,7 @@ def _dir_size(path: Path) -> str:
 
 
 def _graph_stats(graphml: Path):
-    """Baca jumlah node/edge tanpa dependensi berat (parsing XML sederhana)."""
+    """Read node/edge counts without heavy dependencies (simple XML parsing)."""
     if not graphml.exists():
         return None
     try:
@@ -116,7 +116,7 @@ def cmd_backup(args):
     if EVAL_CASES.exists():
         shutil.copy2(EVAL_CASES, dest / "eval_cases.json")
 
-    # Catatan ringkas supaya isi backup jelas saat dibuka lagi berbulan-bulan kemudian.
+    # A short note so the backup's contents are clear when opened again months later.
     stats = _graph_stats(dest / "processed" / "graph.graphml")
     meta_path = dest / "processed" / "paper_metadata.json"
     titles = []
@@ -191,9 +191,9 @@ def cmd_clear(args):
     _wipe_current()
 
 
-# Artefak turunan yang bergantung pada model embedding / hasil build. PDF, paper_metadata.json dan
-# extraction_cache.json (keluaran LLM, tidak bergantung pada embedding) sengaja TIDAK termasuk.
-# extraction_models.json = berkas lama (sebelum arsip ekstraksi), dibersihkan bila masih ada.
+# Derived artifacts that depend on the embedding model / build result. PDFs, paper_metadata.json and
+# extraction_cache.json (LLM output, independent of the embedding) are deliberately NOT included.
+# extraction_models.json = an old file (from before the extraction archive), cleaned up if still present.
 INDEX_ARTIFACTS = ("graph.graphml", "manifest.json", "graph_visualization.html",
                    "similarity_debug*.csv", "checkpoint_*.json", "extraction_models.json",
                    "fact_embeddings.npz")
@@ -269,7 +269,7 @@ def cmd_restore(args):
 
 
 def _verify_after_restore():
-    """Bandingkan hasil restore dengan manifest-nya. Backup lama tanpa manifest hanya diberi peringatan."""
+    """Compare the restore result with its manifest. Old backups without a manifest only get a warning."""
     from src.security.integrity import ArtifactIntegrityError, check_artifacts
     graphml = PROCESSED / "graph.graphml"
     if not graphml.exists():
@@ -283,7 +283,7 @@ def _verify_after_restore():
 
 
 def cmd_manifest(_args):
-    """Tulis manifest untuk korpus aktif (migrasi korpus yang dibangun sebelum fitur ini; tanpa build ulang)."""
+    """Write the manifest for the active corpus (migrates a corpus built before this feature; no rebuild)."""
     import networkx as nx
     from src import config
     from src.security.integrity import MANIFEST_PATH, build_manifest, write_manifest
@@ -304,13 +304,13 @@ def cmd_manifest(_args):
 
 
 def cmd_audit(_args):
-    """Read-only: pindai graph + chunk untuk teks yang mencurigakan. Tidak mengubah apa pun."""
+    """Read-only: scan graph + chunks for suspicious text. Changes nothing."""
     from typing import get_args
     import networkx as nx
     from src import config
     from src.security.sanitize import MAX_ENTITY_NAME_LENGTH, audit_text
 
-    findings = []  # (lokasi, cuplikan, alasan)
+    findings = []  # (location, snippet, reason)
 
     def add(where, text, reasons):
         if reasons:

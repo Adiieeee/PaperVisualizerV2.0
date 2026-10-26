@@ -24,16 +24,16 @@ from src.security.integrity import (
 # ──────────────────────────────────────────
 # Checkpoint helpers
 # ──────────────────────────────────────────
-# Arsip ekstraksi = checkpoint ekstraksi yang TIDAK dihapus setelah build: hasil LLM per chunk
-# (+ status ok/retried/salvaged/failed, model, hash teks). Ekstraksi adalah tahap termahal dan tidak
-# deterministik; arsip memungkinkan audit dan build ulang tanpa mengekstrak ulang (reset-index
-# mempertahankannya). Dipakai ulang hanya bila teks chunk DAN sidik jari prompt/skema sama.
+# The extraction archive = the extraction checkpoint that is NOT deleted after the build: the per-chunk LLM result
+# (+ status ok/retried/salvaged/failed, model, text hash). Extraction is the most expensive stage and is not
+# deterministic; the archive allows auditing and rebuilding without re-extracting (reset-index
+# keeps it). Reused only if the chunk text AND the prompt/schema fingerprint match.
 EXTRACTION_CACHE_PATH = "data/processed/extraction_cache.json"
 EXTRACTION_CACHE_VERSION = 1
 
 
 def extraction_fingerprint() -> str:
-    """Berubah bila prompt ekstraksi atau skema yang dikirim ke LLM berubah."""
+    """Changes when the extraction prompt or the schema sent to the LLM changes."""
     blob = build_extraction_prompt("", None) + json.dumps(LLMExtractedKnowledge.model_json_schema(), sort_keys=True)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
 
@@ -43,7 +43,7 @@ def _text_sha256(text: str) -> str:
 
 
 def _load_extraction_cache(fingerprint: str) -> dict:
-    """{chunk_id: entry} yang dibuat dengan prompt/skema sekarang; {} bila belum ada atau usang."""
+    """{chunk_id: entry} made with the current prompt/schema; {} if there is none yet or it is stale."""
     if not os.path.exists(EXTRACTION_CACHE_PATH):
         return {}
     try:
@@ -83,9 +83,9 @@ def _print_extraction_summary(entries: dict):
         print(f"[Extract] Diselamatkan sebagian (item dibuang): {salvaged}")
 
 def _vector_store_mismatch(chroma, embed):
-    """Pesan error bila ChromaDB berisi vektor berdimensi lain dari model embedding sekarang, else None."""
+    """Error message if ChromaDB holds vectors of a different dimension than the current embedding model, else None."""
     stored = chroma_stats(chroma)["dimension"]
-    if stored is None:  # store kosong: aman
+    if stored is None:  # empty store: safe
         return None
     current = len(embed.embed_text("dimension probe"))
     if stored == current:
@@ -96,8 +96,8 @@ def _vector_store_mismatch(chroma, embed):
 
 
 def _stop_for_quota(stage: str, exc: Exception):
-    """Kuota harian habis setelah dedup. Arsip ekstraksi + checkpoint dedup masih ada, jadi re-run
-    setelah reset melewati keduanya dan mengulang hanya tahap graph/komunitas."""
+    """Daily quota exhausted after dedup. The extraction archive + dedup checkpoint still exist, so a re-run
+    after the quota resets skips both and repeats only the graph/community stages."""
     print(f"\n[Build] Stopped during {stage}: {exc}")
     print("[Checkpoint] Extraction archive + dedup checkpoint kept; re-run 'python main.py build' after the "
           "quota resets (graph, family merge and community summaries are redone).")
@@ -250,23 +250,23 @@ def build_pipeline(reextract: bool = False):
     try:
         dedup.process_extracted_knowledge(knowledge_list, resume_from_idx=dedup_resume_idx)
     except DailyQuotaExceededError as e:
-        # Dedup sengaja tanpa fallback (keputusan merge harus dari satu model). Checkpoint sudah
-        # disimpan oleh deduplicator; re-run setelah kuota reset melanjutkan dari sana.
+        # Dedup deliberately has no fallback (merge decisions must come from one model). The checkpoint is already
+        # saved by the deduplicator; a re-run after the quota resets continues from there.
         print(f"\n[Dedup] Stopped: {e}")
         print(f"[Checkpoint] Dedup progress saved to {DEDUP_CHECKPOINT_PATH}.")
         return
-    # Checkpoint dedup TIDAK dihapus di sini, tapi di akhir build bersama checkpoint ekstraksi:
-    # kalau build gagal sesudah ini, re-run melewati dedup (semua item sudah terpetakan) alih-alih
-    # mengulang semua keputusan merge (boros kuota, dan hasilnya bisa berbeda).
+    # The dedup checkpoint is NOT deleted here, but at the end of the build together with the extraction checkpoint:
+    # if the build fails after this point, a re-run skips dedup (every item is already mapped) instead of
+    # repeating all the merge decisions (wasting quota, and the results could differ).
 
     # 5. Graph Construction (with provenance: anchors every entity to its source Paper)
     graph_builder = GraphBuilder()
     graph_builder.add_knowledge_with_provenance(knowledge_items)
     graph_builder.link_models_to_papers(paper_metadata)  # B2: link popular model names to papers
     graph_builder.reclassify_noncanonical_papers(paper_metadata)  # drop cited-paper leakage (e.g. NiN)
-    graph_builder.link_entity_families()      # hubungkan varian ber-versi ke node keluarga
+    graph_builder.link_entity_families()      # link versioned variants to a family node
     try:
-        graph_builder.merge_family_aliases(llm)  # satukan keluarga yg beda penyebutan (ChatGPT vs GPT)
+        graph_builder.merge_family_aliases(llm)  # merge families that are mentioned differently (ChatGPT vs GPT)
     except DailyQuotaExceededError as e:
         _stop_for_quota("family merge", e)
         return
@@ -290,14 +290,14 @@ def build_pipeline(reextract: bool = False):
                 "summary": summary
             })
         except DailyQuotaExceededError as e:
-            # Gemini DAN Groq habis: berhenti, jangan selesaikan build dengan ringkasan bolong.
+            # Both Gemini AND Groq exhausted: stop, do not finish the build with incomplete summaries.
             _stop_for_quota("community summarization", e)
             return
         except Exception as e:
             print(f"[Warning] Skipped community {c['community_id']} summarization: {e}")
 
-    # Disimpan SETELAH tahap yang bisa berhenti karena kuota: berhenti di tengah tidak boleh
-    # meninggalkan graph.graphml baru di samping chroma_db/manifest lama (engine menolak start).
+    # Saved AFTER the stages that can stop on quota: stopping midway must not
+    # leave a new graph.graphml next to an old chroma_db/manifest (the engine refuses to start).
     graph_builder.save_graph("data/processed/graph.graphml")
 
     # 7. Vector DB Storage
@@ -308,7 +308,7 @@ def build_pipeline(reextract: bool = False):
     chunk_embs = embed.embed_batch(chunk_texts)
     chroma.add_chunks(chunks, chunk_embs)
     
-    # Selalu dipanggil (juga bila kosong): koleksi diganti seluruhnya, ringkasan build lama tak tersisa.
+    # Always called (even when empty): the collection is replaced entirely, no summaries from an old build remain.
     print("Embedding and storing community summaries...")
     summary_embs = embed.embed_batch([s["summary"] for s in summaries]) if summaries else []
     chroma.add_community_summaries(summaries, summary_embs)
@@ -321,9 +321,9 @@ def build_pipeline(reextract: bool = False):
     except Exception as e:
         print(f"[Integrity] Could not write the manifest: {e}. Create it later with: python corpus.py manifest")
 
-    # 7.6 Cache embedding fakta untuk rerank graph (query-time): diisi lengkap sekarang supaya tidak ada query
-    #     yang menunggu embedding. Dibaca dari graph.graphml tersimpan agar teksnya persis seperti saat query.
-    #     Tanpa LLM; gagal di sini tidak membatalkan build (query mengisi cache sendiri bila perlu).
+    # 7.6 Fact embedding cache for graph rerank (query-time): filled completely now so no query
+    #     has to wait for embedding. Read from the saved graph.graphml so the texts are exactly what they are at query time.
+    #     No LLM; a failure here does not cancel the build (a query fills the cache itself if needed).
     try:
         import networkx as nx
         stats = GraphFactReranker(embed, cache_path=FACT_EMBEDDINGS_PATH).warm(
@@ -392,8 +392,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="GraphRAG Paper Explorer CLI", add_help=True
     )
-    # mode dibuat opsional supaya `python main.py` menampilkan panduan yang jelas,
-    # bukan error argparse yang membingungkan.
+    # mode is optional so `python main.py` shows clear usage guidance,
+    # rather than a confusing argparse error.
     parser.add_argument("mode", nargs="?", choices=["build", "query"],
                         help="build = bangun graph, query = tanya")
     parser.add_argument("--query", "-q", type=str, help="Pertanyaan (untuk mode 'query')")
