@@ -57,3 +57,6 @@ ROADMAP.md
 .idea/
 .DS_Store
 Thumbs.db
+
+# Output evaluate.py --e2e yang dialihkan ke file (lokal)
+e2e_*.txt
