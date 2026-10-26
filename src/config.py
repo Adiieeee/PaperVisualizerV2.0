@@ -51,6 +51,12 @@ DEDUP_SIMILARITY_THRESHOLD = 0.75
 # bge-m3: correct Indonesian paraphrases >= 0.638, wrong matches observed <= 0.600 (thin margin; recheck
 # with evaluate.py after a build). It used to be 0.72 for bge-small-en-v1.5.
 RESOLVER_SIM_THRESHOLD = 0.62
+# Corpus topic terms: title words found in >= this share of the paper titles (here only "sycophancy", 7/8).
+# They occur in almost every question and in many node names, so the resolver does not match nodes made of
+# them alone, and a broad question about the topic is answered from community summaries. Fixed before
+# measuring (2026-10-26); do not tune against the eval. Below MIN_PAPERS no term is derived.
+TOPIC_TERM_MIN_SHARE = 0.5
+TOPIC_TERM_MIN_PAPERS = 3
 # Vector paths (chunk fallback + thematic): results below the threshold are dropped; if all of them fall away, the engine
 # refuses without an LLM call. bge-m3 (calibrated 2026-10-23, top-1 cosine): relevant fallbacks >= 0.563,
 # clearly out-of-domain <= 0.466 (coffee, weather, translation); ResNet/ImageNet 0.529 deliberately passes (refused by the

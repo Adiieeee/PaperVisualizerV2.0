@@ -6,7 +6,8 @@ import re
 from src.llm.embedding import EmbeddingClient
 from src.vectorstore.chromadb_store import ChromaStore
 from src.config import (
-    CHUNK_MIN_SIMILARITY, COMMUNITY_MIN_SIMILARITY, RESOLVER_SIM_THRESHOLD, load_model_to_paper,
+    CHUNK_MIN_SIMILARITY, COMMUNITY_MIN_SIMILARITY, RESOLVER_SIM_THRESHOLD, TOPIC_TERM_MIN_PAPERS,
+    TOPIC_TERM_MIN_SHARE, load_model_to_paper,
 )
 
 # Query words that signal the user wants the PAPER (not the model node): authors, affiliation,
@@ -47,6 +48,32 @@ _TITLE_STOP = {
     "the", "a", "an", "of", "for", "in", "on", "and", "or", "to", "with", "from",
     "is", "are", "its", "not", "but", "how", "what", "as", "at", "by", "via",
 }
+
+
+def corpus_topic_terms(titles, min_share: float = TOPIC_TERM_MIN_SHARE,
+                       min_papers: int = TOPIC_TERM_MIN_PAPERS) -> frozenset:
+    """Title words (> 3 letters, not stop words) found in >= min_share of the titles: the corpus topic,
+    e.g. "sycophancy" in 7 of 8 sycophancy papers. Empty when there are fewer than min_papers titles."""
+    titles = [t for t in titles if t]
+    if len(titles) < min_papers:
+        return frozenset()
+    counts = {}
+    for t in titles:
+        for w in {w for w in _WORD_RE.findall(t.lower()) if len(w) > 3 and w not in _TITLE_STOP}:
+            counts[w] = counts.get(w, 0) + 1
+    return frozenset(w for w, n in counts.items() if n >= min_share * len(titles))
+
+
+def is_topic_only(name: str, topic_terms) -> bool:
+    """True when a node name holds nothing but topic terms, short words and filler ("Sycophancy",
+    "AI Sycophancy"); "Social Sycophancy" and "Sycophancy Rate" keep a content word, so they are real
+    entities. Always False without topic terms."""
+    if not topic_terms:
+        return False
+    words = _WORD_RE.findall(name.lower())
+    if not any(w in topic_terms for w in words):
+        return False
+    return not [w for w in words if len(w) > 2 and w not in topic_terms and w not in _STOPWORDS]
 
 
 class QueryResolver:
