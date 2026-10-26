@@ -7,10 +7,34 @@ and passages from the text before an LLM writes the answer, and it says so when 
 It runs locally on your machine and is built for a **$0 budget**: free LLM tiers (Google Gemini, optional Groq
 fallback) and a local embedding model. No paid or cloud services are required.
 
+## Why "V2"?
+
+**V1** built a knowledge graph from the papers and showed it as an interactive visualization. It was a map to
+explore, but it had no retrieval: to answer a question you had to search and click through the graph yourself.
+
+**V2** (this repository) keeps the knowledge graph and visualizer and adds the **retrieval and question-answering
+layer** that turns it into GraphRAG:
+
+| | V1 | V2 |
+|---|---|---|
+| Knowledge graph from PDFs | ✓ | ✓ |
+| Interactive visualization | ✓ | ✓ |
+| Vector index of the paper text | — | ✓ ChromaDB with local `bge-m3` embeddings |
+| Community detection + summaries for thematic questions | — | ✓ |
+| Question routing (entity / thematic / counting / structural / off-topic) | — | ✓ |
+| Graph traversal + relevance reranking as answer context | — | ✓ |
+| Chatbot with answers grounded in the papers | — | ✓ |
+| Guardrails (relevance thresholds, off-topic refusal, prompt-injection defenses) | — | ✓ |
+| Evaluation harness with measured retrieval and answer accuracy | — | ✓ |
+
+In short: V1 answers *"what is in these papers?"* by showing you the graph; V2 also answers *your question* by
+retrieving the relevant facts and passages and generating an answer from them.
+
 ---
 
 ## Contents
 
+- [Why "V2"?](#why-v2)
 - [What it does](#what-it-does)
 - [Who it is for](#who-it-is-for)
 - [How it works](#how-it-works)
