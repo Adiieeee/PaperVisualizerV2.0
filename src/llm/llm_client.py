@@ -40,7 +40,7 @@ class DailyQuotaExceededError(Exception):
     pass
 
 
-# Nama dari LITELLM_INTEGRATION_PLAN.md. Alias, bukan kelas baru: server.py dan test sudah
+# Alias, bukan kelas baru: server.py dan test sudah
 # menangkap DailyQuotaExceededError.
 LLMQuotaError = DailyQuotaExceededError
 

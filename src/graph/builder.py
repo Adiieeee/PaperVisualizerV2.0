@@ -60,7 +60,7 @@ class GraphBuilder:
                     if ent.type == "Paper":
                         doc_paper_candidates.setdefault(doc_id, Counter())[ent.name] += 1
 
-        # Pass 2: edges — only between known nodes, never self-loops (same guard as add_knowledge)
+        # Pass 2: edges — only between known nodes, never self-loops
         skipped_dangling = 0
         skipped_selfloop = 0
         for chunk_id, k in knowledge_items:
@@ -122,58 +122,6 @@ class GraphBuilder:
                     connected += 1
         if connected:
             print(f"[Builder] Anchored {connected} orphan node(s) to their source Paper via mentioned_in.")
-
-    def add_knowledge(self, knowledge_list: List[ExtractedKnowledge]):
-        """
-        Adds deduplicated entities and relationships to the NetworkX graph.
-        GraphML does not support None values — all attributes are coerced to strings.
-
-        Two passes: all entity nodes are added first, so an edge is kept as long as
-        BOTH endpoints exist as entity nodes somewhere in the corpus. Edges whose
-        endpoints were never extracted as entities are skipped instead of silently
-        auto-creating typeless "phantom" nodes (NetworkX add_edge default behavior).
-        Self-loops — which can appear once two entities merge to the same canonical
-        name during dedup — are also skipped.
-        """
-        # Pass 1: entity nodes
-        for k in knowledge_list:
-            for ent in k.entities:
-                if not self.graph.has_node(ent.name):
-                    self.graph.add_node(
-                        ent.name,
-                        type=ent.type or "",
-                        description=ent.description or "",
-                        source_chunk_id=getattr(ent, "_source_chunk_id", "") or "",
-                    )
-                else:
-                    # Update description if it's currently empty
-                    if not self.graph.nodes[ent.name].get('description') and ent.description:
-                        self.graph.nodes[ent.name]['description'] = ent.description
-
-        # Pass 2: edges — only between known nodes, never self-loops
-        skipped_dangling = 0
-        skipped_selfloop = 0
-        for k in knowledge_list:
-            for rel in k.relationships:
-                if rel.source_entity == rel.target_entity:
-                    skipped_selfloop += 1
-                    continue
-                if not (self.graph.has_node(rel.source_entity) and self.graph.has_node(rel.target_entity)):
-                    skipped_dangling += 1
-                    continue
-                if self.graph.has_edge(rel.source_entity, rel.target_entity):
-                    continue
-                self.graph.add_edge(
-                    rel.source_entity,
-                    rel.target_entity,
-                    relation=rel.relation_type or "",
-                    description=rel.description or "",
-                    source_chunk_id=getattr(rel, "_source_chunk_id", "") or "",
-                )
-
-        if skipped_dangling or skipped_selfloop:
-            print(f"[Builder] Skipped {skipped_dangling} dangling edges "
-                  f"(endpoint not an extracted entity) and {skipped_selfloop} self-loops.")
 
     def link_models_to_papers(self, paper_metadata: dict):
         """
@@ -365,10 +313,3 @@ class GraphBuilder:
         """
         atomic_write(filepath, lambda tmp: nx.write_graphml(self.graph, tmp))
         print(f"Graph saved to {filepath} with {self.graph.number_of_nodes()} nodes and {self.graph.number_of_edges()} edges.")
-
-    def load_graph(self, filepath: str):
-        """
-        Loads the graph from GraphML format.
-        """
-        self.graph = nx.read_graphml(filepath)
-        print(f"Graph loaded from {filepath}.")

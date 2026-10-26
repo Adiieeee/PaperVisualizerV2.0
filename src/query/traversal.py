@@ -85,10 +85,6 @@ class GraphTraversal:
 
         return context
 
-    # Backwards-compatible 1-hop helper.
-    def traverse_1_hop(self, start_node: str) -> Dict[str, Any]:
-        return self.traverse(start_node, max_hops=1)
-
     def format_traversal_context(self, traversal_result: Dict[str, Any]) -> str:
         """
         Susun hasil traversal jadi teks untuk LLM (roadmap 3.6).
