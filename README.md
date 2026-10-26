@@ -124,13 +124,20 @@ Question
   ▼
 Retrieval (local, no LLM)
   ├─ entity     → resolve node(s) → 2-hop traversal → rerank facts by similarity to the question
+  │                (nodes named only by the corpus topic, e.g. "Sycophancy", are never picked)
   ├─ thematic   → community summaries above a relevance threshold
   ├─ counting   → rank entities by number of papers, then connections
   ├─ structural → bridge entities linked to ≥ 2 papers
-  └─ no node found → chunk search above a relevance threshold, each passage labelled with its paper
+  └─ no node found
+       ├─ broad question about the corpus topic → community summaries
+       └─ otherwise → chunk search above a relevance threshold, each passage labelled with its paper
   ▼
 Answer (1 LLM call): context is wrapped as untrusted DATA; the model answers only from it
 ```
+
+The corpus topic (here "sycophancy") is derived automatically from the paper titles. It appears in almost every
+question, so it is never used on its own to pick a graph node; a question about the topic in general ("how can
+sycophancy be reduced?") is answered from the community summaries instead.
 
 A normal question costs **2 LLM calls**. Off-topic questions and questions with no relevant passage cost **1** (the
 router) and return a fixed message.
@@ -297,8 +304,9 @@ different corpus, or chunks from the previous papers will still be searchable.
 
 ### Retrieval and end-to-end evaluation
 
-`eval/eval_cases.json` holds 62 hand-written questions (entity facts, relations, counting, themes, unanswerable and
-adversarial questions, prompt-injection attempts) with the keywords a correct answer must contain.
+`eval/eval_cases.json` holds 73 hand-written questions (entity facts, relations, counting, themes, unanswerable and
+adversarial questions, prompt-injection attempts, and 11 held-out broad questions written before the code they test)
+with the keywords a correct answer must contain.
 
 ```bash
 python evaluate.py                                   # retrieval quality, free (no LLM calls)
@@ -311,9 +319,9 @@ Current results on the 8-paper corpus:
 
 | Metric | Score |
 |---|---|
-| Retrieval (right facts retrieved) | 38/41 = 93% |
+| Retrieval (right facts retrieved) | 47/52 = 90% (original cases 38/41, held-out 9/11) |
 | Guardrail (out-of-domain questions refused without an LLM call) | 5/5 |
-| End-to-end (final answer correct, single run) | 52/61 = 85% |
+| End-to-end (final answer correct, 2 runs per case) | 113/124 = 91% (80% in one run before reranking and guardrails) |
 
 The remaining retrieval failures are documented limitations (see below). Gemini is not fully deterministic, so
 compare end-to-end changes with `--repeat` rather than one run.
@@ -325,7 +333,7 @@ pip install -r requirements/dev.txt
 python -m pytest tests -q
 ```
 
-The suite (about 280 tests, ~30 s) needs no network and no LLM quota. It covers prompt sanitization, request guards,
+The suite (about 300 tests, ~30 s) needs no network and no LLM quota. It covers prompt sanitization, request guards,
 XSS escaping in the frontend, artifact integrity, extraction salvage, quota handling and retrieval logic.
 `tests/test_frontend_browser.py` runs in headless Chrome/Edge and is skipped if neither is installed (set
 `CHROME_PATH` to point to one).
