@@ -182,6 +182,8 @@ def test_router_offers_off_topic_but_guards_research_questions(monkeypatch):
     assert "'off_topic'" in prompt and "five intents" in prompt
     # pertanyaan konsep AI/ML dan riset di luar korpus tidak boleh ditolak sebagai off_topic
     assert "NOT off_topic" in prompt and "When in doubt, do NOT choose 'off_topic'" in prompt
+    # pertanyaan campuran (sah + permintaan lain) tidak boleh ditolak seluruhnya (e2e sec-mixed-request)
+    assert "MIXES a question about the papers with an" in prompt
 
 
 def test_build_time_prompts_neutralize_untrusted_text(monkeypatch):
