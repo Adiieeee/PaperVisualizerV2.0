@@ -45,7 +45,6 @@ logs/
 # Internal documents (plans, security, internship report) — local only
 docs/SECURITY.md
 docs/LAPORAN_*.md
-PLAN_*.md
 
 # IDEs & OS Files
 .vscode/
