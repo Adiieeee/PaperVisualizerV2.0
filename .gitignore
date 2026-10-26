@@ -34,15 +34,15 @@ data/processed/*
 !data/raw/.gitkeep
 !data/processed/.gitkeep
 
-# Corpus backups (hasil build yang disimpan supaya tidak perlu rebuild)
+# Corpus backups (build results kept so there is no need to rebuild)
 backups/
 
-# Local tooling / logs / test caches (berisi path lokal atau teks pertanyaan pengguna)
+# Local tooling / logs / test caches (contain local paths or users' question text)
 .claude/settings.local.json
 logs/
 .pytest_cache/
 
-# Dokumen internal (rencana, keamanan, laporan magang) — hanya lokal
+# Internal documents (plans, security, internship report) — local only
 docs/SECURITY.md
 docs/LAPORAN_*.md
 PLAN_*.md
@@ -53,5 +53,5 @@ PLAN_*.md
 .DS_Store
 Thumbs.db
 
-# Output evaluate.py --e2e yang dialihkan ke file (lokal)
+# Output of evaluate.py --e2e redirected to a file (local)
 e2e_*.txt

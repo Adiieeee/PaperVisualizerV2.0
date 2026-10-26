@@ -361,27 +361,27 @@ def cmd_audit(_args):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Kelola korpus paper (backup / clear / restore).")
+    ap = argparse.ArgumentParser(description="Manage paper corpora (backup / clear / restore).")
     sub = ap.add_subparsers(dest="cmd")
 
-    sub.add_parser("list", help="daftar backup korpus")
+    sub.add_parser("list", help="list corpus backups")
 
-    p_b = sub.add_parser("backup", help="simpan korpus aktif ke backups/<nama>")
-    p_b.add_argument("name", help="nama tema, mis. cnn-klasik / nlp-transformer")
+    p_b = sub.add_parser("backup", help="save the active corpus to backups/<name>")
+    p_b.add_argument("name", help="theme name, e.g. cnn-klasik / nlp-transformer")
 
-    p_c = sub.add_parser("clear", help="kosongkan korpus aktif")
-    p_c.add_argument("-y", "--yes", action="store_true", help="tanpa konfirmasi")
+    p_c = sub.add_parser("clear", help="empty the active corpus")
+    p_c.add_argument("-y", "--yes", action="store_true", help="no confirmation")
 
     p_x = sub.add_parser("reset-index",
-                         help="hapus indeks hasil build, pertahankan PDF + paper_metadata.json + arsip ekstraksi")
-    p_x.add_argument("-y", "--yes", action="store_true", help="tanpa konfirmasi")
+                         help="delete the build index, keep the PDFs + paper_metadata.json + extraction archive")
+    p_x.add_argument("-y", "--yes", action="store_true", help="no confirmation")
 
-    p_r = sub.add_parser("restore", help="pulihkan korpus dari backup")
-    p_r.add_argument("name", help="nama backup")
-    p_r.add_argument("-y", "--yes", action="store_true", help="tanpa konfirmasi")
+    p_r = sub.add_parser("restore", help="restore a corpus from a backup")
+    p_r.add_argument("name", help="backup name")
+    p_r.add_argument("-y", "--yes", action="store_true", help="no confirmation")
 
-    sub.add_parser("manifest", help="tulis manifest integritas untuk korpus aktif (tanpa build ulang)")
-    sub.add_parser("audit", help="pindai graph + chunk untuk teks mencurigakan (read-only)")
+    sub.add_parser("manifest", help="write the integrity manifest for the active corpus (no rebuild)")
+    sub.add_parser("audit", help="scan graph + chunks for suspicious text (read-only)")
 
     args = ap.parse_args()
     if not args.cmd:

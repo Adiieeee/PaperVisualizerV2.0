@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-GraphRAG Paper Explorer: builds a knowledge graph (NetworkX) from PDFs in `data/raw/`, then answers questions over it by combining graph traversal, ChromaDB vector search, and LLM generation (Gemini via LiteLLM, optional Groq fallback). The app is an interactive graph visualizer (pyvis/vis.js) with a chatbot panel, served by FastAPI. Docs, UI text and most prompts are in Indonesian; answers are generated in the language of the question.
+GraphRAG Paper Explorer: builds a knowledge graph (NetworkX) from PDFs in `data/raw/`, then answers questions over it by combining graph traversal, ChromaDB vector search, and LLM generation (Gemini via LiteLLM, optional Groq fallback). The app is an interactive graph visualizer (pyvis/vis.js) with a chatbot panel, served by FastAPI. Code comments, docstrings and docs are written in English; UI text, runtime messages and most prompts are in Indonesian (do not translate those: prompts feed the extraction fingerprint and tests pin the wording); answers are generated in the language of the question.
 
 **Hard constraint: $0 budget.** Free tiers without a credit card only: Gemini via Google AI Studio (`gemini/gemini-flash-lite-latest`) as primary, Groq (e.g. `groq/openai/gpt-oss-120b`) as optional fallback, both through LiteLLM (no proxy, no cache). Embeddings run locally (`BAAI/bge-m3`, multilingual, 1024 dims; GPU when available, else CPU), never through LiteLLM. No paid/cloud services.
 

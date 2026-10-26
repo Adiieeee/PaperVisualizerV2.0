@@ -395,8 +395,8 @@ if __name__ == "__main__":
     # mode is optional so `python main.py` shows clear usage guidance,
     # rather than a confusing argparse error.
     parser.add_argument("mode", nargs="?", choices=["build", "query"],
-                        help="build = bangun graph, query = tanya")
-    parser.add_argument("--query", "-q", type=str, help="Pertanyaan (untuk mode 'query')")
+                        help="build = build the graph, query = ask a question")
+    parser.add_argument("--query", "-q", type=str, help="Question (for 'query' mode)")
     parser.add_argument("--reextract", action="store_true",
                         help="build: abaikan arsip ekstraksi dan ekstrak ulang semua chunk")
 

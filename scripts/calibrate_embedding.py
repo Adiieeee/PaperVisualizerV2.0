@@ -173,7 +173,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--model", required=True)
     ap.add_argument("--revision", required=True)
-    ap.add_argument("--out", default=None, help="folder output (default: data/processed/calibration/<model>)")
+    ap.add_argument("--out", default=None, help="output folder (default: data/processed/calibration/<model>)")
     args = ap.parse_args()
     out = args.out or os.path.join("data/processed/calibration", re.sub(r"[^\w.-]", "_", args.model))
     os.makedirs(out, exist_ok=True)
