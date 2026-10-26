@@ -42,15 +42,10 @@ backups/
 logs/
 .pytest_cache/
 
-# Dokumen internal (rencana/spesifikasi, keamanan, laporan magang) — hanya lokal
-LITELLM_INTEGRATION_PLAN.md
-GraphRAG_Paper_Explorer_Spec.md
-TECHNICAL_REFERENCE.md
-project_context.md
-SECURITY.md
-security-playbook.md
-LAPORAN_*.md
-ROADMAP.md
+# Dokumen internal (rencana, keamanan, laporan magang) — hanya lokal
+docs/SECURITY.md
+docs/LAPORAN_*.md
+PLAN_*.md
 
 # IDEs & OS Files
 .vscode/

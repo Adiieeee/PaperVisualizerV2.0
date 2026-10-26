@@ -1,5 +1,5 @@
 """
-Kontrol level-request untuk server lokal (lihat SECURITY.md). ASGI murni, bukan BaseHTTPMiddleware,
+Kontrol level-request untuk server lokal (lihat docs/SECURITY.md). ASGI murni, bukan BaseHTTPMiddleware,
 supaya ukuran body bisa dihitung juga untuk body *chunked* dan semua cek berjalan SEBELUM body di-parse
 oleh FastAPI/Pydantic (yang berjalan sebelum handler — cek di dalam handler bisa dilewati payload
 yang sengaja invalid).

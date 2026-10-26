@@ -10,7 +10,7 @@ GraphRAG Paper Explorer: builds a knowledge graph (NetworkX) from PDFs in `data/
 
 ## Commands
 
-Setup: `pip install -r requirements.txt` (`requirements-dev.txt` adds pytest/httpx), and put `GEMINI_API_KEY=...` in `.env` (copy `.env.example`; loaded in `src/config.py`). Optional: `GROQ_API_KEY` + `GROQ_MODEL` enable the Groq fallback (either empty = no fallback); `GEMINI_MODEL` overrides the Gemini model (LiteLLM `provider/model` names). `requirements.lock.txt` is a reproducibility reference (Python 3.14.6, Windows), not the install path.
+Setup: `pip install -r requirements.txt` (`requirements/dev.txt` adds pytest/httpx), and put `GEMINI_API_KEY=...` in `.env` (copy `.env.example`; loaded in `src/config.py`). Optional: `GROQ_API_KEY` + `GROQ_MODEL` enable the Groq fallback (either empty = no fallback); `GEMINI_MODEL` overrides the Gemini model (LiteLLM `provider/model` names). `requirements/lock.txt` is a reproducibility reference (Python 3.14.6, Windows), not the install path.
 
 GPU (optional, ~5x faster embedding): `pip install torch==2.13.0+cu126 --index-url https://download.pytorch.org/whl/cu126` replaces the CPU torch wheel (tested on a GTX 1650 4 GB; bge-m3 fp32 peaks at ~2.6 GB VRAM). `EMBEDDING_DEVICE=auto|cpu|cuda` (default `auto`). Vectors stay fp32, so a store built on GPU is queried correctly on CPU (cosine 1.0). fp16 was slower on that card and shifts vectors, so it is not used.
 
@@ -75,7 +75,7 @@ Structured output is sent via `response_format_for(schema)`: a non-strict JSON s
 
 ### App (`server.py`, `src/security/guards.py`, `src/graph/visualizer.py`)
 
-`GraphVisualizer.build_html()` renders pyvis (inline resources; the Bootstrap CDN tags pyvis adds are stripped so the page is fully offline) and injects a large custom panel (`_PANEL_CSS/_PANEL_HTML/_PANEL_JS` string constants + a `GR_DATA` JSON blob) before `</body>`. The panel's chat box calls `POST /api/chat`, which only exists under `server.py` (the static snapshot degrades gracefully). `server.py` exposes `create_app(engine, html)` (importable without torch); the engine and graph are loaded **once at startup** in `main()` — restart `server.py` after a rebuild or `corpus.py restore`. `DESIGN_REFERENCE.md` is the UI spec. Write HTML as UTF-8 yourself (pyvis's `write_html` uses the OS codepage and crashes on Windows).
+`GraphVisualizer.build_html()` renders pyvis (inline resources; the Bootstrap CDN tags pyvis adds are stripped so the page is fully offline) and injects a large custom panel (`_PANEL_CSS/_PANEL_HTML/_PANEL_JS` string constants + a `GR_DATA` JSON blob) before `</body>`. The panel's chat box calls `POST /api/chat`, which only exists under `server.py` (the static snapshot degrades gracefully). `server.py` exposes `create_app(engine, html)` (importable without torch); the engine and graph are loaded **once at startup** in `main()` — restart `server.py` after a rebuild or `corpus.py restore`. `docs/DESIGN_REFERENCE.md` is the UI spec. Write HTML as UTF-8 yourself (pyvis's `write_html` uses the OS codepage and crashes on Windows).
 
 ## Security conventions (threat model: personal, local-only tool; public repo others may fork)
 

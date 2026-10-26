@@ -2,7 +2,7 @@
 Perakit prompt jawaban akhir — SATU-SATUNYA tempat konteks + pertanyaan digabung menjadi prompt.
 
 Modul ini sengaja bebas dependensi berat (tanpa google-genai/torch) supaya bisa dites langsung.
-Aturan keamanan (lihat SECURITY.md): semua teks yang berasal dari pengguna atau dokumen lewat
+Aturan keamanan (lihat docs/SECURITY.md): semua teks yang berasal dari pengguna atau dokumen lewat
 `neutralize_tags()` sebelum diinterpolasi; isi tag konteks diperlakukan sebagai DATA, bukan instruksi.
 Jangan menginterpolasi konteks ke prompt di tempat lain.
 """

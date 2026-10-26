@@ -1,5 +1,5 @@
 # Dependensi langsung, dengan batas kompatibel (versi teruji di catatan kanan).
-# Untuk instalasi yang persis sama dengan yang diuji, lihat requirements.lock.txt.
+# Untuk instalasi yang persis sama dengan yang diuji, lihat requirements/lock.txt.
 PyMuPDF>=1.28,<2             # teruji 1.28.0
 litellm==1.104.0             # dipin persis (supply chain: 1.82.7/1.82.8 pernah disusupi); Gemini + Groq
 pydantic>=2.13,<3            # teruji 2.13.4

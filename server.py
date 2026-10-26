@@ -12,7 +12,7 @@ your browser. Requires a completed build (data/processed/graph.graphml).
 Note: each chat message makes 2 LLM calls (Gemini, or Groq once Gemini's daily quota is
 gone), so it consumes daily free-tier quota — just like the CLI query. Budget stays $0 (local server, local embeddings).
 
-Keamanan (lihat SECURITY.md): server ini untuk pemakaian LOKAL. Host allow-list tetap, guard
+Keamanan (lihat docs/SECURITY.md): server ini untuk pemakaian LOKAL. Host allow-list tetap, guard
 request (ukuran/Content-Type/Origin/rate limit/concurrency), header keamanan + CSP berbasis hash,
 error generik ke klien. Jangan di-expose ke internet.
 """

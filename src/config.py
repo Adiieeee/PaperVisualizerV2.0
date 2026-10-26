@@ -30,7 +30,7 @@ EMBEDDING_DEVICE = os.getenv("EMBEDDING_DEVICE", "auto")  # auto | cpu | cuda
 EMBEDDING_MAX_SEQ_LENGTH = 1024  # chunk 2000 karakter ~500 token; tak pernah melebihi batas model sendiri
 EMBEDDING_BATCH_SIZE = 16
 
-# --- Security limits (lihat SECURITY.md). Semua batas keras ada di kode, bukan di prompt. ---
+# --- Security limits (lihat docs/SECURITY.md). Semua batas keras ada di kode, bukan di prompt. ---
 ANSWER_MAX_OUTPUT_TOKENS = 2048          # cap biaya/latensi jawaban akhir
 MAX_CHAT_QUERY_LENGTH = 500              # panjang pertanyaan maksimum di /api/chat
 MAX_CHAT_BODY_BYTES = 10_000             # ukuran body maksimum di /api/chat (juga untuk body chunked)
