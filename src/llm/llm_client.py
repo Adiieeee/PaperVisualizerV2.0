@@ -1,23 +1,23 @@
 """
-Satu-satunya jalur ke penyedia LLM: LiteLLM Router di dalam proses (tanpa proxy, tanpa cache).
+The only path to the LLM providers: an in-process LiteLLM Router (no proxy, no cache).
 
-Alias:
-- "dedup"   -> Gemini saja, TANPA fallback. Keputusan merge harus konsisten dari satu model;
-               kalau kuota habis, caller simpan checkpoint lalu berhenti.
-- "general" -> Gemini; pindah ke Groq HANYA saat kuota HARIAN Gemini habis (dan hanya bila
-               GROQ_API_KEY dan GROQ_MODEL diisi). Token Groq dihemat: gpt-oss berpikir dulu.
+Aliases:
+- "dedup"   -> Gemini only, NO fallback. Merge decisions must come from a single model;
+               when the quota runs out, the caller saves its checkpoint and stops.
+- "general" -> Gemini; switches to Groq ONLY when Gemini's DAILY quota is exhausted (and only if
+               GROQ_API_KEY and GROQ_MODEL are set). Groq tokens are conserved: gpt-oss reasons first.
 
-Fallback sengaja tidak memakai `fallbacks=` milik Router: itu memindah ke Groq pada SETIAP
-kegagalan (429 per menit, 503, cooldown). Di sini 429 per menit dan 5xx di-raise apa adanya dan
-diretry ke Gemini oleh tenacity di LLMService. Router juga tidak meretry (num_retries=0) dan
-tanpa cooldown — dua lapis retry akan melipatgandakan request dan membakar kuota.
+The fallback deliberately does not use the Router's `fallbacks=`: that would switch to Groq on EVERY
+failure (per-minute 429s, 503s, cooldowns). Here per-minute 429s and 5xx errors are re-raised as-is and
+retried on Gemini by tenacity in LLMService. The Router also does not retry (num_retries=0) and has no
+cooldowns: two layers of retries would multiply requests and burn the quota.
 """
 import json
 import logging
 import os
 from typing import Optional, Type
 
-# Tanpa ini `import litellm` mengunduh cost map model dari GitHub (pytest harus tanpa jaringan).
+# Without this, `import litellm` downloads the model cost map from GitHub (pytest must run without network).
 os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 
 import litellm
@@ -27,9 +27,9 @@ from pydantic import BaseModel, ValidationError
 from src.config import GEMINI_API_KEY, GEMINI_MODEL, GROQ_API_KEY, GROQ_MODEL
 
 litellm.suppress_debug_info = True
-# Build = ribuan panggilan: DeprecationWarning `temperature` Gemini 3+ (WARNING, tiap panggilan) dan
-# dump body error Router (ERROR, dicetak dua kali) menenggelamkan output. Error-nya tetap sampai ke
-# caller sebagai exception; perpindahan ke Groq dicatat oleh logger "llm" di bawah.
+# A build makes thousands of calls: the Gemini 3+ `temperature` DeprecationWarning (WARNING, every call) and
+# the Router's error-body dump (ERROR, printed twice) would drown the output. The error still reaches the
+# caller as an exception; switches to Groq are logged by the "llm" logger below.
 logging.getLogger("LiteLLM").setLevel(logging.ERROR)
 logging.getLogger("LiteLLM Router").setLevel(logging.CRITICAL)
 log = logging.getLogger("llm")
@@ -40,12 +40,12 @@ class DailyQuotaExceededError(Exception):
     pass
 
 
-# Alias, bukan kelas baru: server.py dan test sudah
-# menangkap DailyQuotaExceededError.
+# An alias, not a new class: server.py and the tests already
+# catch DailyQuotaExceededError.
 LLMQuotaError = DailyQuotaExceededError
 
-# Penanda kuota HARIAN di pesan 429. Gemini: "GenerateRequestsPerDayPerProjectPerModel...".
-# Groq: "... on requests per day (RPD)" / "tokens per day (TPD)". Selain ini = limit per menit.
+# Marker of a DAILY quota in a 429 message. Gemini: "GenerateRequestsPerDayPerProjectPerModel...".
+# Groq: "... on requests per day (RPD)" / "tokens per day (TPD)". Anything else = a per-minute limit.
 _DAILY_MARKERS = ("perday", "per day")
 
 _DAILY_MESSAGE = (
@@ -56,7 +56,7 @@ _DAILY_MESSAGE = (
 )
 
 
-# Alias yang boleh pindah ke Groq saat kuota harian habis -> alias deployment Groq-nya.
+# Aliases allowed to switch to Groq when the daily quota runs out -> the alias of their Groq deployment.
 FALLBACK_ALIASES = {"general": "general_backup"}
 BACKUP_ALIAS = FALLBACK_ALIASES["general"]
 
@@ -81,9 +81,9 @@ def build_router(
         print("WARNING: GEMINI_API_KEY not found in environment variables.")
 
     model_list = [
-        # dedup: Gemini saja, tanpa fallback
+        # dedup: Gemini only, no fallback
         {"model_name": "dedup", "litellm_params": {"model": gemini_model, "api_key": gemini_key}},
-        # general: Gemini; BACKUP_ALIAS dipanggil eksplisit oleh call_llm saat kuota harian habis
+        # general: Gemini; BACKUP_ALIAS is called explicitly by call_llm when the daily quota runs out
         {"model_name": "general", "litellm_params": {"model": gemini_model, "api_key": gemini_key}},
     ]
     if groq_key and groq_model:
@@ -111,13 +111,13 @@ def _complete(router: Router, alias: str, kwargs: dict):
     except DailyQuotaExceededError:
         backup = FALLBACK_ALIASES.get(alias)
         if backup is None or backup not in router.get_model_names():
-            raise  # dedup, atau Groq tidak dikonfigurasi
+            raise  # dedup, or Groq is not configured
         log.warning("Kuota harian Gemini habis untuk alias=%s; pindah ke Groq (%s).", alias, backup)
         return _completion_daily_checked(router, backup, kwargs)
 
 
 def _flatten_optional(node):
-    """`Optional[X]` Pydantic = anyOf[X, null] -> X + nullable (bentuk yang dikirim google-genai)."""
+    """Pydantic `Optional[X]` = anyOf[X, null] -> X + nullable (the shape google-genai sends)."""
     if isinstance(node, list):
         return [_flatten_optional(n) for n in node]
     if not isinstance(node, dict):
@@ -134,10 +134,10 @@ def _flatten_optional(node):
 
 
 def response_format_for(schema: Type[BaseModel]) -> dict:
-    """Skema JSON NON-strict dari model Pydantic, sedekat mungkin dengan yang dikirim google-genai.
-    Kelas Pydantic yang diberikan langsung diubah LiteLLM ke mode strict ala OpenAI: SEMUA field
-    jadi wajib (mis. `description` Optional di Entity/Relationship) -> output Gemini berubah dan
-    token deskripsi wajib bertambah. Field wajib dibiarkan persis seperti di Pydantic."""
+    """NON-strict JSON schema of a Pydantic model, as close as possible to what google-genai sends.
+    LiteLLM turns a Pydantic class passed directly into OpenAI-style strict mode: ALL fields become
+    required (e.g. the Optional `description` on Entity/Relationship) -> Gemini's output changes and
+    the required description tokens add up. Required fields stay exactly as in Pydantic."""
     return {
         "type": "json_schema",
         "json_schema": {
@@ -168,15 +168,15 @@ def call_llm(
     validate: bool = True,
     **extra,
 ):
-    """Return (hasil, nama_model_yang_dipakai).
+    """Return (result, name_of_the_model_used).
 
-    Kalau schema diisi, hasil adalah instance Pydantic (ValueError bila tidak lolos validasi).
-    Kalau tidak, string ("" bila model tidak mengembalikan teks, mis. diblokir safety filter).
-    validate=False: schema tetap dikirim sebagai response_format, tapi hasilnya teks mentah — dipakai
-    untuk mengulang/menyelamatkan sebagian output yang tidak lolos validasi.
-    Melempar DailyQuotaExceededError (= LLMQuotaError) kalau kuota harian habis dan tidak ada
-    fallback yang berhasil; 429 per menit dan error lain di-raise apa adanya supaya caller
-    meretry ke Gemini (bukan pindah ke Groq).
+    With a schema, the result is a Pydantic instance (ValueError if validation fails).
+    Without one, a string ("" if the model returns no text, e.g. blocked by a safety filter).
+    validate=False: the schema is still sent as response_format, but the result is raw text — used
+    to retry/salvage part of an output that failed validation.
+    Raises DailyQuotaExceededError (= LLMQuotaError) if the daily quota is exhausted and no
+    fallback succeeds; per-minute 429s and other errors are re-raised as-is so the caller
+    retries on Gemini (rather than switching to Groq).
     """
     router = router or _get_router()
     kwargs = {"messages": messages, "temperature": temperature, **extra}

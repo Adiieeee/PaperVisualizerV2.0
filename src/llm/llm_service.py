@@ -2,8 +2,8 @@ from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_excep
 import json
 import time
 
-# DailyQuotaExceededError kini didefinisikan di llm_client (satu kelas untuk semua jalur);
-# tetap di-import di sini karena server.py dan tes mengambilnya dari modul ini.
+# DailyQuotaExceededError is now defined in llm_client (one class for every path);
+# it is still imported here because server.py and the tests take it from this module.
 from src.llm.llm_client import DailyQuotaExceededError, call_llm
 
 class EmptyResponseError(Exception):
@@ -41,22 +41,22 @@ _LLM_RELATIONS = ", ".join(get_args(LLM_RELATION_TYPES))
 class ExtractionResult:
     knowledge: ExtractedKnowledge
     status: str        # ok | retried | salvaged | failed
-    attempts: int      # panggilan LLM yang dipakai (1 atau 2)
-    dropped: int = 0   # item yang dibuang saat diselamatkan
+    attempts: int      # LLM calls used (1 or 2)
+    dropped: int = 0   # items dropped while salvaging
 
 
 def _parse_strict(raw: str) -> Optional[ExtractedKnowledge]:
-    """Output utuh lolos skema LLM -> model tersimpan; selain itu None."""
+    """The whole output passed the LLM schema -> the model that produced it; otherwise None."""
     try:
         return ExtractedKnowledge.model_validate(LLMExtractedKnowledge.model_validate_json(raw).model_dump())
-    except ValueError:  # pydantic.ValidationError juga turunan ValueError
+    except ValueError:  # pydantic.ValidationError is also a ValueError
         return None
 
 
 def salvage_knowledge(raw: str) -> Optional[Tuple[ExtractedKnowledge, int]]:
-    """Selamatkan item yang valid dari output yang tidak lolos skema. None bila JSON tak terbaca.
-    Relasi bertipe di luar daftar (mis. "evaluates") -> `related_to` dengan label asli di description;
-    item rusak lainnya dibuang. Mengembalikan (knowledge, jumlah item dibuang)."""
+    """Salvage the valid items from an output that failed the schema. None if the JSON is unreadable.
+    Relations with a type outside the list (e.g. "evaluates") -> `related_to` with the original label in the
+    description; other broken items are dropped. Returns (knowledge, number of items dropped)."""
     try:
         data = json.loads(raw)
     except (ValueError, TypeError):
@@ -88,8 +88,8 @@ def salvage_knowledge(raw: str) -> Optional[Tuple[ExtractedKnowledge, int]]:
 
 
 def build_extraction_prompt(text_chunk: str, paper_title: str = None) -> str:
-    """Prompt ekstraksi entitas/relasi untuk satu chunk. Juga dasar sidik jari arsip ekstraksi:
-    mengubah teks ini membuat hasil lama di extraction_cache.json tidak dipakai ulang."""
+    """Entity/relation extraction prompt for one chunk. Also the basis of the extraction archive fingerprint:
+    changing this text means old results in extraction_cache.json are no longer reused."""
     paper_line = (
         f'\n        THIS TEXT IS FROM THE PAPER TITLED: "{paper_title}".\n'
         if paper_title else ""
@@ -135,11 +135,11 @@ def build_extraction_prompt(text_chunk: str, paper_title: str = None) -> str:
 
 
 class LLMService:
-    """Fasad semua panggilan LLM pipeline, semuanya lewat LiteLLM (call_llm, src/llm/llm_client.py).
-    Alias "general": Gemini, pindah ke Groq hanya saat kuota harian Gemini habis. Alias "dedup"
-    (resolve_dedup, resolve_family_merge): Gemini saja — keputusan merge harus dari satu model.
-    Model diatur lewat env GEMINI_MODEL / GROQ_MODEL. `last_model` = model yang benar-benar
-    menjawab panggilan terakhir (untuk audit hasil fallback)."""
+    """Facade for every LLM call in the pipeline, all through LiteLLM (call_llm, src/llm/llm_client.py).
+    Alias "general": Gemini, switching to Groq only when Gemini's daily quota runs out. Alias "dedup"
+    (resolve_dedup, resolve_family_merge): Gemini only — merge decisions must come from a single model.
+    The models are set via the GEMINI_MODEL / GROQ_MODEL env vars. `last_model` = the model that actually
+    answered the last call (to audit the result of a fallback)."""
 
     def __init__(self):
         self.last_model = None
@@ -147,7 +147,7 @@ class LLMService:
             print("WARNING: GEMINI_API_KEY not found in environment variables.")
 
     def _generate(self, prompt: str, alias: str, schema=None, **kwargs):
-        """Satu panggilan lewat call_llm + jeda rate limit. ValueError = output tidak lolos skema."""
+        """One call through call_llm + a rate-limit pause. ValueError = the output failed the schema."""
         try:
             result, self.last_model = call_llm(
                 [{"role": "user", "content": prompt}], alias=alias, schema=schema, **kwargs
@@ -170,9 +170,9 @@ class LLMService:
         `paper_title` (B1): the canonical title of the paper this chunk belongs to, so the LLM
         anchors this paper's authors / proposed method to a consistent Paper entity.
 
-        Output tidak lolos skema -> panggil ulang SEKALI. Masih tidak lolos -> selamatkan sebagian dari
-        output dengan item valid terbanyak. Kedua output tak terbaca -> status "failed" (caller tidak
-        boleh menganggap chunk selesai). Dulu kegagalan parse diam-diam menjadi hasil kosong.
+        Output fails the schema -> call again ONCE. Still failing -> salvage part of the output
+        with the most valid items. Both outputs unreadable -> status "failed" (the caller must not
+        consider the chunk done). Parse failures used to silently become an empty result.
         """
         prompt = build_extraction_prompt(text_chunk, paper_title)
         raws = []
@@ -231,9 +231,9 @@ class LLMService:
     )
     def resolve_family_merge(self, name_a: str, examples_a: list, name_b: str, examples_b: list) -> FamilyDecision:
         """
-        Putuskan apakah dua "keluarga entitas" sebenarnya keluarga yang sama
-        (mis. ChatGPT vs GPT). Dipakai hanya untuk sedikit pasangan kandidat, jadi murah.
-        Memanfaatkan world knowledge LLM — tidak ada daftar nama yang di-hardcode.
+        Decide whether two "entity families" are really the same family
+        (e.g. ChatGPT vs GPT). Used for only a few candidate pairs, so it is cheap.
+        Relies on the LLM's world knowledge — no hard-coded list of names.
         """
         prompt = f"""
         Dua kelompok nama entitas berikut diambil dari paper akademik. Tentukan apakah keduanya

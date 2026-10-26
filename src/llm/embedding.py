@@ -9,7 +9,7 @@ from src.config import (
 
 
 def resolve_device(setting: str = EMBEDDING_DEVICE) -> str:
-    """'auto' -> 'cuda' bila torch versi CUDA melihat GPU, selain itu 'cpu'. 'cpu'/'cuda' dipakai apa adanya."""
+    """'auto' -> 'cuda' if a CUDA build of torch sees a GPU, otherwise 'cpu'. 'cpu'/'cuda' are used as given."""
     setting = (setting or "auto").strip().lower()
     if setting != "auto":
         return setting
