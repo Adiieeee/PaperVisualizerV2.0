@@ -1,9 +1,9 @@
 [
-  {"id": "count-method",        "q": "Metode apa yang paling banyak dipakai di seluruh paper?",     "category": "counting",   "intent": "counting",   "target_type": "Method",  "expected_contains": ["Beacon"]},
+  {"id": "count-method",        "q": "Metode apa yang paling banyak dipakai di seluruh paper?",     "category": "counting",   "intent": "counting",   "target_type": "Method",  "expected_contains": ["GPT-4o"], "expected_top": ["GPT-4o"]},
   {"id": "count-method2",       "q": "Teknik mitigasi apa yang paling banyak terhubung?",           "category": "counting",   "intent": "counting",   "target_type": "Method",  "expected_contains": ["Mean-Difference Steering"]},
-  {"id": "count-dataset",       "q": "Dataset apa yang paling sering dipakai?",                     "category": "counting",   "intent": "counting",   "target_type": "Dataset", "expected_contains": ["hh-rlhf"]},
-  {"id": "count-metric",        "q": "Metrik evaluasi apa yang paling umum dipakai?",               "category": "counting",   "intent": "counting",   "target_type": "Metric",  "expected_any": ["Sycophancy Rate", "Critical Thinking", "Fluency", "A/B Accuracy"]},
-  {"id": "count-author",        "q": "Penulis siapa yang paling banyak terhubung?",                 "category": "counting",   "intent": "counting",   "target_type": "Author",  "expected_contains": ["Myra Cheng"]},
+  {"id": "count-dataset",       "q": "Dataset apa yang paling sering dipakai?",                     "category": "counting",   "intent": "counting",   "target_type": "Dataset", "expected_contains": ["hh-rlhf"], "expected_top": ["hh-rlhf"]},
+  {"id": "count-metric",        "q": "Metrik evaluasi apa yang paling umum dipakai?",               "category": "counting",   "intent": "counting",   "target_type": "Metric",  "expected_any": ["Sycophancy Rate", "Critical Thinking", "Fluency", "A/B Accuracy"], "expected_top": ["Sycophancy Rate", "Critical Thinking", "Fluency", "A/B Accuracy"]},
+  {"id": "count-author",        "q": "Penulis siapa yang paling banyak terhubung?",                 "category": "counting",   "intent": "counting",   "target_type": "Author",  "expected_contains": ["Myra Cheng"], "expected_top": ["Myra Cheng", "Lujain Ibrahim"]},
 
   {"id": "ent-syceval-data",    "q": "Dataset apa yang digunakan SycEval?",                         "category": "relational", "intent": "entity", "expected_node": "SycEval", "expected_contains": ["MedQuad"]},
   {"id": "ent-towards-data",    "q": "Dataset apa yang dipakai paper Towards Understanding Sycophancy?", "category": "relational", "intent": "entity", "expected_contains": ["MMLU"]},
