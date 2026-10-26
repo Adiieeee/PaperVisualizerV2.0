@@ -1,1 +1,1 @@
-"""Kontrol keamanan lokal: sanitasi prompt, guard request, integritas artefak. Lihat docs/SECURITY.md."""
+"""Local security controls: prompt sanitization, request guards, artifact integrity. See docs/SECURITY.md."""

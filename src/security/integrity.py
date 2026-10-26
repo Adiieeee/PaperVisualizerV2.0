@@ -1,19 +1,19 @@
 """
-Integritas artefak build (graph.graphml + ChromaDB + model embedding) dan tulis-atomik.
+Integrity of the build artifacts (graph.graphml + ChromaDB + embedding model) and atomic writes.
 
-Masalah yang ditutup:
-  * Mengganti EMBEDDING_MODEL ke model lain dengan dimensi SAMA tidak crash — cosine tetap terhitung,
-    tetapi antar dua ruang embedding yang tidak sebanding: jawaban salah yang percaya diri. Manifest
-    mencatat model + revisi yang membangun store, dan engine menolak start bila tidak cocok.
-  * graph.graphml, chroma_db, dan model embedding harus konsisten satu sama lain. `data/processed/*`
-    tidak di-commit, jadi manifest (SHA-256 graph + jumlah node/edge/chunk) adalah satu-satunya cara
-    mendeteksi artefak yang berubah tanpa disadari (korupsi, restore setengah jalan, build terputus).
-  * Checkpoint ekstraksi = keluaran LLM yang mahal (kuota). Tulis tidak-atomik yang terputus di tengah
-    merusak JSON sehingga build tidak bisa dilanjutkan. Tulis via file sementara + os.replace.
+Problems this closes:
+  * Swapping EMBEDDING_MODEL for another model with the SAME dimension does not crash — cosine is still
+    computed, but between two incomparable embedding spaces: confidently wrong answers. The manifest
+    records the model + revision that built the store, and the engine refuses to start on a mismatch.
+  * graph.graphml, chroma_db and the embedding model must be consistent with each other. `data/processed/*`
+    is not committed, so the manifest (graph SHA-256 + node/edge/chunk counts) is the only way
+    to detect artifacts that changed unnoticed (corruption, half-finished restore, interrupted build).
+  * An extraction checkpoint = expensive LLM output (quota). A non-atomic write interrupted midway
+    breaks the JSON so the build cannot resume. Write via a temporary file + os.replace.
 
-Batasan jujur: tiap file atomik, tetapi beberapa os.replace TIDAK atomik sebagai satu kesatuan. Crash di
-antaranya menghasilkan pasangan tak sinkron — yang justru terdeteksi oleh manifest saat start.
-Manifest melindungi dari perubahan TIDAK DISENGAJA, bukan dari penyerang yang menulis ulang manifest juga.
+Honest limitation: each file is atomic, but several os.replace calls are NOT atomic as a whole. A crash
+between them leaves an out-of-sync pair — which the manifest does detect at startup.
+The manifest protects against UNINTENTIONAL changes, not against an attacker who also rewrites the manifest.
 """
 import hashlib
 import json
@@ -28,13 +28,13 @@ MANIFEST_VERSION = 1
 
 
 class ArtifactIntegrityError(RuntimeError):
-    """Artefak build tidak konsisten dengan manifest / konfigurasi. Tidak boleh dilanjutkan diam-diam."""
+    """Build artifacts are inconsistent with the manifest / configuration. Must not be continued silently."""
 
 
-# ── Tulis atomik ────────────────────────────────────────────────────────────────────────────
+# ── Atomic writes ─────────────────────────────────────────────────────────────────────────────────
 
 def atomic_write(path: str, write_fn: Callable[[str], None]) -> None:
-    """Panggil write_fn(tmp_path) lalu os.replace(tmp, path). tmp dibersihkan bila write_fn gagal."""
+    """Call write_fn(tmp_path) then os.replace(tmp, path). tmp is cleaned up if write_fn fails."""
     directory = os.path.dirname(path)
     if directory:
         os.makedirs(directory, exist_ok=True)
@@ -74,7 +74,7 @@ def sha256_file(path: str) -> str:
 
 
 def schema_fingerprint() -> str:
-    """Sidik jari skema tipe (entitas/relasi/intent). Berubah bila daftar tipe di config.py berubah."""
+    """Fingerprint of the type schema (entities/relations/intents). Changes when the type lists in config.py change."""
     parts = [
         "E:" + ",".join(get_args(config.ENTITY_TYPES)),
         "R:" + ",".join(get_args(config.RELATION_TYPES)),
@@ -84,7 +84,7 @@ def schema_fingerprint() -> str:
 
 
 def chroma_stats(chroma) -> dict:
-    """Jumlah chunk/ringkasan komunitas + dimensi vektor yang BENAR-BENAR tersimpan di Chroma."""
+    """Number of chunks/community summaries + the vector dimension ACTUALLY stored in Chroma."""
     chunks = chroma.chunks_collection
     dim = None
     if chunks.count():
@@ -107,7 +107,7 @@ def build_manifest(graph_path: str, graph, chroma) -> dict:
             "model": config.EMBEDDING_MODEL_NAME,
             "revision": config.EMBEDDING_MODEL_REVISION,
             "dimension": stats["dimension"] or config.EMBEDDING_DIMENSION,
-            "max_seq_length": config.EMBEDDING_MAX_SEQ_LENGTH,  # memotong teks panjang -> ikut ruang embedding
+            "max_seq_length": config.EMBEDDING_MAX_SEQ_LENGTH,  # truncates long text -> part of the embedding space
         },
         "schema_fingerprint": schema_fingerprint(),
         "graph": {
@@ -140,7 +140,7 @@ def load_manifest(path: str = MANIFEST_PATH) -> Optional[dict]:
 
 def verify_manifest(manifest: dict, *, graph_path: str, graph, chroma,
                     query_dimension: Optional[int] = None) -> List[str]:
-    """Bandingkan manifest dengan keadaan sekarang. Mengembalikan daftar masalah (kosong = konsisten)."""
+    """Compare the manifest with the current state. Returns a list of problems (empty = consistent)."""
     problems: List[str] = []
 
     emb = manifest.get("embedding", {})
@@ -155,7 +155,7 @@ def verify_manifest(manifest: dict, *, graph_path: str, graph, chroma,
             f"Revisi model embedding berubah: store dibangun dengan revisi '{emb.get('revision')}', config "
             f"sekarang '{config.EMBEDDING_MODEL_REVISION}'. Kembalikan revisinya, atau build ulang."
         )
-    if emb.get("max_seq_length") not in (None, config.EMBEDDING_MAX_SEQ_LENGTH):  # None = manifest lama
+    if emb.get("max_seq_length") not in (None, config.EMBEDDING_MAX_SEQ_LENGTH):  # None = old manifest
         problems.append(
             f"EMBEDDING_MAX_SEQ_LENGTH berubah: store dibangun dengan {emb.get('max_seq_length')}, config "
             f"sekarang {config.EMBEDDING_MAX_SEQ_LENGTH} (teks panjang dipotong berbeda). Kembalikan, atau build ulang."
@@ -194,9 +194,9 @@ def verify_manifest(manifest: dict, *, graph_path: str, graph, chroma,
 
 def check_artifacts(graph_path: str, graph, chroma, embed=None, manifest_path: str = MANIFEST_PATH) -> bool:
     """
-    Dipanggil saat engine start. True = manifest ada dan konsisten. False = manifest belum ada (hanya
-    peringatan: korpus lama sebelum fitur ini; buat dengan `python corpus.py manifest`).
-    Raise ArtifactIntegrityError bila ada ketidakcocokan — gagal keras dan berisik.
+    Called at engine start. True = the manifest exists and is consistent. False = no manifest yet (only a
+    warning: an old corpus from before this feature; create one with `python corpus.py manifest`).
+    Raises ArtifactIntegrityError on any mismatch — fail hard and loudly.
     """
     manifest = load_manifest(manifest_path)
     if manifest is None:

@@ -136,7 +136,7 @@ class SimilarityDebugLogger:
 def _save_dedup_checkpoint(master_list_serializable: dict, name_mapping_global: dict,
                            decision_models: Optional[dict] = None):
     """Save dedup progress to disk (atomic: a crash mid-write must not corrupt the resume state).
-    decision_models: {kandidat: model yang memutuskan merge-nya} — audit; tidak dipakai saat resume."""
+    decision_models: {candidate: the model that decided its merge} — audit; not used when resuming."""
     atomic_write_json(DEDUP_CHECKPOINT_PATH, {
         "master_list": master_list_serializable,
         "name_mapping": name_mapping_global,
@@ -154,8 +154,8 @@ def _load_dedup_checkpoint():
 
 
 def dedup_resume_index(knowledge_list, saved_name_mapping: dict) -> int:
-    """Panjang AWALAN item yang semua entitasnya sudah terpetakan di checkpoint. Bukan jumlah:
-    item selesai yang muncul setelah item terputus tidak boleh membuat item terputus terlewati."""
+    """Length of the PREFIX of items whose entities are all mapped in the checkpoint. Not a count:
+    finished items that appear after an interrupted item must not make the interrupted item get skipped."""
     idx = 0
     for k in knowledge_list:
         if not all(ent.name in saved_name_mapping for ent in k.entities):
@@ -165,7 +165,7 @@ def dedup_resume_index(knowledge_list, saved_name_mapping: dict) -> int:
 
 
 def _load_dedup_decision_models() -> dict:
-    """{kandidat: model} dari checkpoint dedup (kosong untuk checkpoint lama)."""
+    """{candidate: model} from the dedup checkpoint (empty for old checkpoints)."""
     if not os.path.exists(DEDUP_CHECKPOINT_PATH):
         return {}
     with open(DEDUP_CHECKPOINT_PATH, "r", encoding="utf-8") as f:
@@ -184,7 +184,7 @@ class HybridDeduplicator:
         # Used for case-insensitive exact match BEFORE embedding computation
         self.normalized_index: Dict[str, Dict[str, str]] = {}
         self.name_mapping_global: Dict[str, str] = {}
-        self.decision_models: Dict[str, str] = {}  # kandidat -> model yang memutuskan (audit)
+        self.decision_models: Dict[str, str] = {}  # candidate -> the model that decided it (audit)
         self.debug_logger = SimilarityDebugLogger(SIMILARITY_DEBUG_PATH)
         print(f"[Debug] Similarity scores will be logged to: {SIMILARITY_DEBUG_PATH}")
 
@@ -253,8 +253,8 @@ class HybridDeduplicator:
             try:
                 decision = self.llm.resolve_dedup(cand_name, ent_type, candidates_names)
             except LLMQuotaError:
-                # Alias "dedup" tidak punya fallback: simpan progres (termasuk entitas item ini
-                # yang sudah terselesaikan) lalu berhenti bersih; resume melanjutkan dari sini.
+                # The "dedup" alias has no fallback: save progress (including this item's entities that
+                # are already resolved), then stop cleanly; a resume continues from here.
                 self._save_checkpoint()
                 raise
             self.decision_models[cand_name] = self.llm.last_model
@@ -318,9 +318,9 @@ class HybridDeduplicator:
         """
         for idx, k in enumerate(knowledge_list):
             if idx < resume_from_idx:
-                # Sudah diputuskan di run sebelumnya, tapi knowledge_list dimuat ulang dari
-                # checkpoint ekstraksi (nama ASLI): terapkan mapping tersimpan, tanpa LLM/embedding.
-                # Tanpa ini nama yang belum di-dedup masuk ke graph setelah resume.
+                # Already decided in an earlier run, but knowledge_list was reloaded from the
+                # extraction checkpoint (RAW names): apply the saved mapping, without LLM/embedding.
+                # Without this, names not yet deduped would enter the graph after a resume.
                 self._apply_saved_mapping(k)
                 continue
 
@@ -351,9 +351,9 @@ class HybridDeduplicator:
             rel.target_entity = self.name_mapping_global.get(rel.target_entity, rel.target_entity)
 
     def rebuild_normalized_index(self):
-        """Pulihkan indeks langkah 2 (case/punct/akronim) dari master_list setelah resume. Indeks ini
-        hanya ada di memori; tanpa dia, nama yang semestinya cocok deterministik jatuh ke LLM.
-        Panggil setelah register_acronyms (dipakai oleh _normalize)."""
+        """Restore the step-2 index (case/punct/acronym) from master_list after a resume. This index
+        only exists in memory; without it, names that should match deterministically fall through to the LLM.
+        Call after register_acronyms (used by _normalize)."""
         self.normalized_index = {
             ent_type: {_normalize(name): name for name in entities}
             for ent_type, entities in self.master_list.items()

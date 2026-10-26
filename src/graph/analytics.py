@@ -68,17 +68,17 @@ class GraphAnalytics:
         return results[:top_n]
 
     def _node_chunks(self, n) -> set:
-        """Chunk tempat node disebut: atribut node + semua edge-nya (termasuk edge ke Paper,
-        tempat sebagian besar source_chunk_id berada)."""
+        """Chunks where the node is mentioned: the node attribute + all its edges (including edges to Paper,
+        where most source_chunk_ids live)."""
         chunks = {self.graph.nodes[n].get("source_chunk_id", "")}
         chunks.update(d.get("source_chunk_id", "") for _, _, d in self.graph.edges(n, data=True))
         return {c for c in chunks if c}
 
     def _community_graph(self) -> nx.Graph:
         """
-        Graf ko-okurensi untuk deteksi community. Node: semua tipe kecuali
-        COMMUNITY_EXCLUDED_TYPES. Bobot edge = jumlah chunk yang dibagi bersama, +1 untuk
-        tiap relasi asli di antara keduanya (termasuk variant_of).
+        Co-occurrence graph for community detection. Nodes: all types except
+        COMMUNITY_EXCLUDED_TYPES. Edge weight = number of chunks shared, +1 for
+        each real relation between the two (including variant_of).
         """
         nodes = [n for n, d in self.graph.nodes(data=True)
                  if d.get("type") not in COMMUNITY_EXCLUDED_TYPES]
@@ -112,9 +112,9 @@ class GraphAnalytics:
 
     def community_context(self, nodes: List[str], max_nodes: int = 25, max_rels: int = 25) -> str:
         """
-        Teks untuk prompt ringkasan community: anggota (tipe + deskripsi singkat), diurutkan
-        menurut bobot keterhubungan di graf community, lalu relasi asli antar-anggota.
-        Teksnya berasal dari dokumen tak tepercaya; summarize_community yang menetralkannya.
+        Text for the community summary prompt: members (type + short description), ordered
+        by connection weight in the community graph, then the real relations between members.
+        The text comes from untrusted documents; summarize_community is what neutralizes it.
         """
         H = self._community_graph()
         members = set(nodes)

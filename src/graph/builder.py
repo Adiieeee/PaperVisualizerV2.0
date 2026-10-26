@@ -154,9 +154,9 @@ class GraphBuilder:
         if linked:
             print(f"[Builder] Linked {linked} model node(s) to their source paper (B2).")
 
-    # Nama varian bergaya "<huruf><angka versi>": ResNet-50, llama-2-70b-chat, CIFAR-100,
-    # Gemini-1.5-Pro. Murni pola penulisan — tidak ada daftar nama yang di-hardcode, sehingga
-    # bekerja untuk korpus/domain apa pun.
+    # Variant names in the style "<letters><version number>": ResNet-50, llama-2-70b-chat, CIFAR-100,
+    # Gemini-1.5-Pro. Purely a writing pattern — no hard-coded list of names, so it
+    # works for any corpus/domain.
     _FAMILY_BASE_RE = re.compile(r"^([A-Za-z][A-Za-z\s]{2,}?)[\s\-_]*\d")
 
     @classmethod
@@ -169,15 +169,15 @@ class GraphBuilder:
 
     def link_entity_families(self, min_variants: int = 2, min_papers: int = 2):
         """
-        Hubungkan varian bertingkat-versi ke satu node "keluarga" lewat relasi `variant_of`
-        (mis. llama-2-70b-chat / LLaMA 3 / Llama-17B  ->  Llama).
+        Link version-tiered variants to a single "family" node via the `variant_of` relation
+        (e.g. llama-2-70b-chat / LLaMA 3 / Llama-17B  ->  Llama).
 
-        Tujuannya konektivitas, BUKAN penggabungan: setiap varian tetap node tersendiri, jadi
-        guard CRITICAL 1 (ResNet-44 != ResNet-56) tidak dilanggar. Tanpa ini, entitas yang
-        sebenarnya satu keluarga tersebar dan hanya menempel ke paper-nya masing-masing.
+        The goal is connectivity, NOT merging: every variant stays its own node, so the
+        CRITICAL 1 guard (ResNet-44 != ResNet-56) is not violated. Without this, entities that
+        really belong to one family are scattered and only attach to their own papers.
 
-        Keluarga hanya dibuat kalau benar-benar menambah konektivitas: minimal `min_variants`
-        varian DAN tersebar di minimal `min_papers` paper berbeda.
+        A family is created only if it really adds connectivity: at least `min_variants`
+        variants AND spread over at least `min_papers` different papers.
         """
         papers = {n for n, d in self.graph.nodes(data=True) if d.get("type") == "Paper"}
         lower_index = {n.lower(): n for n in self.graph.nodes()}
@@ -200,8 +200,8 @@ class GraphBuilder:
             if len(covered) < min_papers:
                 continue
 
-            # Pakai node yang sudah ada bila namanya persis basis keluarga; kalau tidak,
-            # buat node baru memakai kapitalisasi yang paling sering dipakai varian-variannya.
+            # Use the existing node if its name is exactly the family base; otherwise
+            # create a new node using the capitalization most often used by its variants.
             family = lower_index.get(base_key)
             if family is None:
                 spellings = Counter(b for _, b in members)
@@ -225,13 +225,13 @@ class GraphBuilder:
                   f"(relasi variant_of).")
 
     def family_nodes(self) -> dict:
-        """{node_keluarga: [varian...]} — node yang jadi induk >=2 edge variant_of."""
+        """{family_node: [variants...]} — nodes that are the parent of >=2 variant_of edges."""
         members = {}
         for u, v, d in self.graph.edges(data=True):
             if d.get("relation") != "variant_of":
                 continue
-            # arah tersimpan sebagai (varian, keluarga) saat dibuat, tapi GraphML undirected:
-            # induk = node yang punya lebih banyak tautan variant_of.
+            # the direction is stored as (variant, family) when created, but GraphML is undirected:
+            # parent = the node with more variant_of links.
             du = sum(1 for _, _, e in self.graph.edges(u, data=True) if e.get("relation") == "variant_of")
             dv = sum(1 for _, _, e in self.graph.edges(v, data=True) if e.get("relation") == "variant_of")
             parent, child = (u, v) if du >= dv else (v, u)
@@ -240,13 +240,13 @@ class GraphBuilder:
 
     def merge_family_aliases(self, llm):
         """
-        Gabungkan keluarga yang sebenarnya sama tapi beda penyebutan (mis. ChatGPT vs GPT)
-        dengan adjudikasi LLM. Kandidat dibatasi pada pasangan yang salah satu namanya termuat
-        di nama lain — jadi jumlah panggilan LLM sangat sedikit (biasanya 0-3 per korpus).
-        LLM dipakai karena ia tahu ChatGPT≈GPT tapi ResNet≠DenseNet; pencocokan string murni
-        akan salah menggabungkan keduanya.
-        Kuota harian habis -> DailyQuotaExceededError diteruskan (build berhenti); error lain per
-        pasangan hanya dilewati.
+        Merge families that are really the same but mentioned differently (e.g. ChatGPT vs GPT)
+        through LLM adjudication. Candidates are limited to pairs where one name is contained
+        in the other — so the number of LLM calls is very small (usually 0-3 per corpus).
+        The LLM is used because it knows ChatGPT≈GPT but ResNet≠DenseNet; pure string matching
+        would wrongly merge the two.
+        Daily quota exhausted -> DailyQuotaExceededError is propagated (the build stops); other errors only
+        skip that pair.
         """
         fams = self.family_nodes()
         names = sorted(fams)
@@ -264,7 +264,7 @@ class GraphBuilder:
             try:
                 decision = llm.resolve_family_merge(big, fams.get(big, []), small, fams.get(small, []))
             except DailyQuotaExceededError:
-                raise  # alias "dedup" tanpa fallback: build harus berhenti, bukan melewati merge
+                raise  # the "dedup" alias has no fallback: the build must stop, not skip the merge
             except Exception as e:
                 print(f"[Builder] Adjudikasi keluarga '{big}' vs '{small}' gagal: {e}")
                 continue
