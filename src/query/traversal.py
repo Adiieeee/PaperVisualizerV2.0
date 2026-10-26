@@ -18,12 +18,12 @@ class GraphTraversal:
         BOTH hops always run (traversal is cheap on this graph); only the RECORDED relationships
         are capped at `max_rels` so a high-degree hub can't flood the LLM context.
 
-        `through_source_paper` (roadmap 1.1): kecualikan paper SUMBER dari Paper-blocking, yaitu
-        paper yang bertetangga langsung dengan node awal. Alasannya: banyak fakta tingkat-paper
-        (`uses_dataset`, `has_limitation`, `finds`) menempel di node Paper, sementara user bertanya
-        memakai nama entitasnya (mis. "dataset apa yang dipakai SycEval?" padahal SYCEval adalah
-        node Dataset yang hanya menunjuk ke papernya). Paper yang ditemukan di hop >1 tetap
-        diblokir supaya konteks tidak meledak lewat hub antar-paper.
+        `through_source_paper` (roadmap 1.1): exempt the SOURCE paper from Paper-blocking, i.e. the
+        paper directly adjacent to the start node. Reason: many paper-level facts
+        (`uses_dataset`, `has_limitation`, `finds`) attach to the Paper node, while the user asks
+        using the entity's name (e.g. "dataset apa yang dipakai SycEval?" although SYCEval is a
+        Dataset node that only points to its paper). Papers found at hop >1 stay
+        blocked so the context does not explode through cross-paper hubs.
         """
         if not self.graph.has_node(start_node):
             return {"error": f"Node '{start_node}' not found in the graph."}
@@ -40,10 +40,10 @@ class GraphTraversal:
         visited_edges = set()
         frontier = [start_node]
 
-        # Jatah budget PER HOP. Tanpa ini, node hub (paper dgn puluhan relasi langsung)
-        # menghabiskan seluruh `max_rels` di hop-1, sehingga fakta hop-2 seperti
-        # Paper -> Author -> Institution tidak pernah terekam.
-        # max_rels=None: rekam semua relasi; pemangkasan diserahkan ke GraphFactReranker (menurut relevansi).
+        # Budget PER HOP. Without this, hub nodes (a paper with dozens of direct relations)
+        # use up all of `max_rels` at hop-1, so hop-2 facts like
+        # Paper -> Author -> Institution are never recorded.
+        # max_rels=None: record every relation; pruning is left to GraphFactReranker (by relevance).
         if max_rels is None:
             max_rels = hop1_cap = float("inf")
         else:
@@ -73,8 +73,8 @@ class GraphTraversal:
                     if nb not in visited_nodes:
                         visited_nodes.add(nb)
                         is_paper = self.graph.nodes[nb].get("type") == "Paper"
-                        # Paper-blocking, dengan satu pengecualian: paper SUMBER (hop 1 dari
-                        # node awal non-Paper) boleh diteruskan agar fakta tingkat-paper terjangkau.
+                        # Paper-blocking, with one exception: the SOURCE paper (hop 1 from
+                        # a non-Paper start node) may be expanded so paper-level facts are reachable.
                         is_source_paper = (
                             through_source_paper and is_paper and hop == 1
                             and node_data.get("type") != "Paper"
@@ -87,15 +87,15 @@ class GraphTraversal:
 
     def format_traversal_context(self, traversal_result: Dict[str, Any]) -> str:
         """
-        Susun hasil traversal jadi teks untuk LLM (roadmap 3.6).
+        Turn the traversal result into text for the LLM (roadmap 3.6).
 
-        Format lama berupa daftar datar yang mengulang nama entitas di SETIAP baris
-        (~40 char × 150 baris terbuang) dan mencampur semua tipe relasi, sehingga LLM sulit
-        menemukan fakta spesifik. Format ini:
-          - mengelompokkan relasi hop-1 PER TIPE RELASI (uses_dataset, finds, ...)
-          - membuang pengulangan nama entitas
-          - menyajikan relasi hop-2 sebagai RANTAI eksplisit (A -> relasi -> B) supaya
-            penalaran multi-hop seperti Paper->Author->Institution terlihat jelas
+        The old format was a flat list that repeated the entity name on EVERY line
+        (~40 chars × 150 lines wasted) and mixed all relation types, so the LLM struggled
+        to find specific facts. This format:
+          - groups hop-1 relations PER RELATION TYPE (uses_dataset, finds, ...)
+          - drops the repeated entity names
+          - presents hop-2 relations as explicit CHAINS (A -> relation -> B) so
+            multi-hop reasoning like Paper->Author->Institution is easy to see
         """
         if "error" in traversal_result:
             return traversal_result["error"]
@@ -117,7 +117,7 @@ class GraphTraversal:
         if direct:
             out.append("\n--- RELASI LANGSUNG ---")
             for relation, items in direct.items():
-                # Nama pendek digabung satu baris; item panjang (Finding/Limitation) per baris
+                # Short names are joined on one line; long items (Finding/Limitation) go one per line
                 if all(len(i) <= 55 for i in items):
                     out.append(f"▸ {relation} ({len(items)}): " + " · ".join(items))
                 else:

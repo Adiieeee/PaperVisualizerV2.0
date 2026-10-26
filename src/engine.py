@@ -13,13 +13,13 @@ from src.security.integrity import check_artifacts
 from src import config
 from src.config import FACT_EMBEDDINGS_PATH, load_paper_metadata
 
-# Jawaban tetap (tanpa panggilan LLM) bila pencarian vektor tidak menemukan apa pun di atas ambang
-# relevansi. Dwibahasa karena bahasa pertanyaan tidak dideteksi; frasanya dikenali evaluate.REFUSAL.
+# Fixed answer (no LLM call) when the vector search finds nothing above the relevance threshold.
+# Bilingual because the question's language is not detected; its phrasing is recognized by evaluate.REFUSAL.
 NO_CONTEXT_MESSAGE = (
     "Maaf, tidak ada informasi tentang hal itu di dokumen yang tersedia. / "
     "Sorry, there is no information about this in the provided documents."
 )
-# Jawaban tetap untuk intent off_topic (router): tanpa retrieval dan tanpa panggilan LLM kedua.
+# Fixed answer for the off_topic intent (router): no retrieval and no second LLM call.
 OFF_TOPIC_MESSAGE = (
     "Maaf, saya hanya bisa menjawab pertanyaan tentang paper di korpus ini; tidak ada informasi tentang "
     "hal itu di dokumen. / Sorry, I can only answer questions about the papers in this corpus; the "
@@ -28,8 +28,8 @@ OFF_TOPIC_MESSAGE = (
 
 
 def format_chunk(i: int, hit: dict, paper_titles: dict) -> str:
-    """`[i] (Sumber: <judul paper>) <teks>`; judul dari paper_metadata.json, fallback ke nama file PDF.
-    Judul adalah keluaran LLM atas PDF: ikut dinetralkan bersama blok konteksnya di build_answer_prompt."""
+    """`[i] (Sumber: <paper title>) <text>`; the title comes from paper_metadata.json, falling back to the PDF file name.
+    The title is LLM output over a PDF: it is neutralized together with its context block in build_answer_prompt."""
     doc_id = hit.get("doc_id")
     if not doc_id:
         return f"[{i}] {hit['text']}"
@@ -67,9 +67,9 @@ class GraphRAGEngine:
             print("[2] Off-topic question: refused without retrieval")
             return OFF_TOPIC_MESSAGE
 
-        # Konteks dikumpulkan per ASAL-USUL (graph / teks mentah / ringkasan komunitas) supaya prompt
-        # jawaban bisa membungkus tiap jenis dengan tag sendiri dan menandainya sebagai DATA
-        # (src/llm/prompts.py). Setiap bagian ditambahkan ke `context_parts` dan jenisnya di `kind`.
+        # Context is collected per ORIGIN (graph / raw text / community summaries) so the answer prompt
+        # can wrap each kind in its own tag and mark it as DATA
+        # (src/llm/prompts.py). Each part is added to `context_parts` and its kind to `kind`.
         context_parts = []
         kind = KIND_GRAPH
 
@@ -111,20 +111,20 @@ class GraphRAGEngine:
         else: # entity
             print("[2] Executing Hybrid Entity Search")
             search_q = routing.search_query or user_query
-            # Roadmap 1.2: pertanyaan bisa menyebut >1 entitas ("SycEval dan ELEPHANT").
+            # Roadmap 1.2: a question can mention >1 entity ("SycEval dan ELEPHANT").
             nodes = self.resolver.resolve_entities(search_q, context_query=user_query)
             if not nodes and search_q != user_query:
                 nodes = self.resolver.resolve_entities(user_query, context_query=user_query)
 
             if nodes:
-                # Budget konteks per entitas (lihat config). Dibaca saat query, bukan di-import, supaya
-                # `evaluate.py --budget` bisa menggantinya untuk eksperimen.
+                # Per-entity context budget (see config). Read at query time, not imported, so
+                # `evaluate.py --budget` can override it for experiments.
                 budget = config.ENTITY_BUDGET_SINGLE if len(nodes) == 1 else config.ENTITY_BUDGET_MULTI
                 print(f"[3] Traversing graph from {nodes} (multi-hop, budget {budget}/entitas)")
                 context_parts.append("Graph Context:")
                 for n in nodes:
-                    # Semua relasi 2-hop diambil, lalu dipangkas & diurutkan menurut relevansi terhadap
-                    # pertanyaan asli (bukan search_query yang hanya nama entitas).
+                    # All 2-hop relations are fetched, then pruned & ordered by relevance to
+                    # the original question (not search_query, which is only the entity name).
                     trav_result = self.traversal.traverse(n, max_hops=2, max_rels=None)
                     trav_result = self.reranker.select(trav_result, user_query, budget)
                     context_parts.append(self.traversal.format_traversal_context(trav_result))

@@ -34,15 +34,15 @@ _WORD_RE = re.compile(r"\w+", re.UNICODE)
 
 
 def _contains_term(term: str, text: str) -> bool:
-    """`term` muncul utuh di `text`. Tanda hubung dihitung bagian kata, jadi node "RLHF" TIDAK cocok
-    dengan "hh-rlhf" dan "GPT" tidak cocok dengan "GPT-4o" (sebelumnya "-" dianggap batas kata)."""
+    """`term` appears whole in `text`. A hyphen counts as part of a word, so the node "RLHF" does NOT match
+    "hh-rlhf" and "GPT" does not match "GPT-4o" (previously "-" was treated as a word boundary)."""
     return re.search(_TERM_LEFT + re.escape(term) + _TERM_RIGHT, text) is not None
 
 
 _TERM_LEFT, _TERM_RIGHT = r"(?<![\w-])", r"(?![\w-])"
 
-# Kata umum di judul paper yang tidak membedakan apa pun — dibuang saat menghitung
-# tumpang-tindih judul (roadmap 1.5).
+# Generic words in paper titles that distinguish nothing — dropped when computing
+# title overlap (roadmap 1.5).
 _TITLE_STOP = {
     "the", "a", "an", "of", "for", "in", "on", "and", "or", "to", "with", "from",
     "is", "are", "its", "not", "but", "how", "what", "as", "at", "by", "via",
@@ -93,11 +93,11 @@ class QueryResolver:
             if node.lower() == ql:
                 return node
 
-        # 1.5. Judul Paper cocok sebagian. Judul panjang jarang disebut utuh oleh user
-        # ("paper Towards Understanding Sycophancy" vs judul asli yang 6 kata), sehingga lapis 2
-        # di bawah malah memenangkan node generik pendek yang kebetulan termuat ("Sycophancy").
-        # DIGERBANGI KETAT: minimal 2 kata judul yang cocok DAN rasio >= ambang, supaya query
-        # biasa (mis. "metrik sycophancy apa saja?") tidak terbajak ke node Paper.
+        # 1.5. Partial Paper-title match. Users rarely mention a long title in full
+        # ("paper Towards Understanding Sycophancy" vs the real 6-word title), so layer 2
+        # below would instead pick a short generic node that happens to be contained ("Sycophancy").
+        # STRICTLY GATED: at least 2 matching title words AND a ratio >= the threshold, so ordinary queries
+        # (e.g. "metrik sycophancy apa saja?") are not hijacked to a Paper node.
         paper_hit = self._match_paper_title(ql, nodes)
         if paper_hit:
             return paper_hit
@@ -138,13 +138,13 @@ class QueryResolver:
     def resolve_entities(self, query: str, context_query: str = None,
                          max_entities: int = 3) -> List[str]:
         """
-        Roadmap 1.2 — kembalikan SEMUA entitas yang disebut di query (bukan hanya satu),
-        untuk pertanyaan perbandingan seperti "institusi penulis paper SycEval DAN ELEPHANT".
+        Roadmap 1.2 — return ALL entities mentioned in the query (not just one),
+        for comparison questions like "institusi penulis paper SycEval DAN ELEPHANT".
 
-        Cara: ambil semua nama node yang termuat verbatim, lalu pilih secara greedy dari yang
-        TERPANJANG sambil membuang yang **rentang katanya tumpang tindih** — supaya "ResNet"
-        tidak ikut terpilih saat "ResNet-50" sudah dipilih. Kalau query hanya menyebut satu
-        entitas, jatuh kembali ke `resolve_entity()` biasa sehingga perilaku lama tak berubah.
+        Method: take every node name contained verbatim, then pick greedily from the
+        LONGEST while dropping any whose **word span overlaps** — so "ResNet"
+        is not also chosen once "ResNet-50" has been chosen. If the query mentions only one
+        entity, fall back to the plain `resolve_entity()` so the old behavior is unchanged.
         """
         ctx = (context_query or query).lower()
         ql = query.strip().strip("?.!,").lower()
@@ -157,14 +157,14 @@ class QueryResolver:
                 continue
             for m in re.finditer(_TERM_LEFT + re.escape(nl) + _TERM_RIGHT, ql):
                 spans.append((len(nl), m.start(), m.end(), node))
-        spans.sort(reverse=True)  # terpanjang menang
+        spans.sort(reverse=True)  # longest wins
 
         chosen, taken = [], []
         for _, s, e, node in spans:
             if any(s < te and e > ts for ts, te in taken):
-                continue  # tumpang tindih dgn yang sudah dipilih
+                continue  # overlaps with one already chosen
             taken.append((s, e))
-            # Kalau query bertanya soal atribut paper, petakan nama entitas -> node Paper-nya
+            # If the query asks about paper attributes, map the entity name -> its Paper node
             target = node
             if paper_mode:
                 title = self.model_to_paper.get(node.lower())
@@ -188,11 +188,11 @@ class QueryResolver:
     def _match_paper_title(self, query_lower: str, nodes, min_ratio: float = 0.55,
                            min_words: int = 2) -> Optional[str]:
         """
-        Cocokkan query ke node Paper lewat tumpang-tindih kata judul (roadmap 1.5).
-        Dua gerbang supaya tidak agresif:
-          - `min_words`: minimal 2 kata judul bermakna harus muncul di query (cegah kebetulan
-            satu kata seperti "sycophancy" memenangkan paper acak)
-          - `min_ratio`: minimal sekian persen kata judul muncul di query
+        Match the query to a Paper node by title-word overlap (roadmap 1.5).
+        Two gates so it is not aggressive:
+          - `min_words`: at least 2 meaningful title words must appear in the query (prevents a coincidental
+            single word such as "sycophancy" from winning a random paper)
+          - `min_ratio`: at least this fraction of the title words must appear in the query
         """
         qwords = set(_WORD_RE.findall(query_lower))
         best, best_ratio = None, 0.0
@@ -250,14 +250,14 @@ class QueryResolver:
 
 
 def l2_to_cosine(distance: float) -> float:
-    """Koleksi Chroma dibuat tanpa `hnsw:space`, jadi jaraknya L2 kuadrat. Untuk vektor ternormalisasi
-    (bge-m3, normalize_embeddings=True) d = 2 - 2*cos, sehingga cos = 1 - d/2."""
+    """The Chroma collection is created without `hnsw:space`, so the distance is squared L2. For normalized vectors
+    (bge-m3, normalize_embeddings=True) d = 2 - 2*cos, hence cos = 1 - d/2."""
     return 1.0 - distance / 2.0
 
 
 def relevant_hits(results: dict, min_similarity: float) -> List[dict]:
-    """Hasil query Chroma -> [{text, doc_id, score}] dengan cosine >= min_similarity (urutan Chroma dipertahankan).
-    ChromaDB selalu mengembalikan top-k, walaupun semuanya jauh dari pertanyaan."""
+    """Chroma query result -> [{text, doc_id, score}] with cosine >= min_similarity (Chroma's order is kept).
+    ChromaDB always returns top-k, even when all of them are far from the question."""
     docs = (results.get("documents") or [[]])[0] or []
     dists = (results.get("distances") or [[]])[0] or []
     metas = (results.get("metadatas") or [[]])[0] or []

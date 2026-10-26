@@ -1,21 +1,22 @@
 """
-Rerank fakta graph terhadap pertanyaan: pangkas node yang melebihi budget menurut relevansi (bukan
-urutan BFS/GraphML) dan urutkan konteks supaya fakta yang paling relevan muncul lebih dulu.
+Rerank graph facts against the question: prune nodes that exceed the budget by relevance (not by
+BFS/GraphML order) and order the context so the most relevant facts appear first.
 
-Skor = cosine bge-m3 (model embedding yang sudah dimuat engine, tanpa model baru) antara pertanyaan asli
-user dan teks fakta "source relation target — deskripsi". Meng-embed fakta mahal (bge-m3 568M parameter:
-~25 ms/fakta di GTX 1650, ~80 ms di CPU; node GPT-4o punya 301 fakta), jadi embedding fakta di-cache per
-teks di memori DAN di disk (FACT_EMBEDDINGS_PATH): tiap fakta dihitung sekali, restart tetap cepat.
-Cache dialamatkan oleh teks dan hanya dipakai bila model/revisi/panjang-seq sama, jadi aman lintas korpus.
+Score = bge-m3 cosine (the embedding model the engine has already loaded, no new model) between the user's
+original question and the fact text "source relation target — description". Embedding facts is expensive
+(bge-m3 568M parameters: ~25 ms/fact on a GTX 1650, ~80 ms on CPU; the GPT-4o node has 301 facts), so fact
+embeddings are cached per text in memory AND on disk (FACT_EMBEDDINGS_PATH): each fact is computed once,
+and restarts stay fast. The cache is addressed by text and only used when the model/revision/seq-length are
+the same, so it is safe across corpora.
 
-Aturan (diuji di tests/test_graph_rerank.py):
-  - jatah hop-1 tetap <= 60% budget (sama dengan traverse()), sisanya untuk hop-2;
-  - hop-1 dipilih per GRUP relasi (skor grup = skor anggota tertinggi), grup diambil utuh selama muat,
-    supaya daftar seperti `uses_dataset` tidak terpotong sebagian tanpa alasan;
-  - fakta hop-2 hanya disimpan bila tepi hop-1 induknya tersimpan (rantai A → B → C tidak putus);
-  - urutan keluaran: grup hop-1 menurut skor grup, hop-2 menurut skor. format_traversal_context
-    mempertahankan urutan list, jadi format dan prompt jawaban tidak berubah. Node di bawah budget
-    tidak kehilangan fakta apa pun; hanya urutannya yang berubah.
+Rules (tested in tests/test_graph_rerank.py):
+  - the hop-1 allowance stays <= 60% of the budget (same as traverse()), the rest goes to hop-2;
+  - hop-1 is chosen per relation GROUP (group score = highest member score); groups are taken whole as long as
+    they fit, so a list like `uses_dataset` is not cut partway for no reason;
+  - hop-2 facts are kept only if their parent hop-1 edge is kept (the chain A → B → C does not break);
+  - output order: hop-1 groups by group score, hop-2 by score. format_traversal_context
+    preserves list order, so the format and the answer prompt do not change. A node under the budget
+    loses no facts; only their order changes.
 """
 import os
 from typing import Any, Dict, List, Optional
@@ -25,7 +26,7 @@ import numpy as np
 from src.config import EMBEDDING_MAX_SEQ_LENGTH, EMBEDDING_MODEL_NAME, EMBEDDING_MODEL_REVISION
 from src.security.integrity import atomic_write
 
-HOP1_SHARE = 0.6  # sama dengan hop1_cap di GraphTraversal.traverse
+HOP1_SHARE = 0.6  # same as hop1_cap in GraphTraversal.traverse
 _CACHE_MODEL_ID = f"{EMBEDDING_MODEL_NAME}@{EMBEDDING_MODEL_REVISION}/seq{EMBEDDING_MAX_SEQ_LENGTH}"
 
 
@@ -35,8 +36,8 @@ def fact_text(rel: Dict[str, Any]) -> str:
 
 
 def all_fact_texts(graph) -> List[str]:
-    """Semua teks fakta yang bisa muncul di konteks: tiap edge dari KEDUA arah, karena arah source/target
-    ditentukan oleh traversal (graph tak berarah). Atribut dibaca persis seperti traverse()."""
+    """All fact texts that can appear in the context: every edge from BOTH directions, because the source/target
+    direction is decided by traversal (the graph is undirected). Attributes are read exactly as in traverse()."""
     texts = []
     for u, v, ed in graph.edges(data=True):
         for source, target in ((u, v), (v, u)):
@@ -46,7 +47,7 @@ def all_fact_texts(graph) -> List[str]:
 
 
 def load_fact_cache(path: str) -> Dict[str, np.ndarray]:
-    """{teks fakta: vektor} dari disk; {} bila tidak ada, rusak, atau dibuat oleh model lain."""
+    """{fact text: vector} from disk; {} if missing, corrupt, or made by another model."""
     if not path or not os.path.exists(path):
         return {}
     try:
@@ -54,7 +55,7 @@ def load_fact_cache(path: str) -> Dict[str, np.ndarray]:
             if str(data["model"]) != _CACHE_MODEL_ID:
                 return {}
             return {str(t): v for t, v in zip(data["texts"], data["vectors"].astype(np.float32))}
-    except Exception as e:  # file rusak: hitung ulang saja, jangan gagalkan query
+    except Exception as e:  # corrupt file: just recompute, don't fail the query
         print(f"[Rerank] Cache embedding fakta diabaikan ({e})")
         return {}
 
@@ -63,7 +64,7 @@ def save_fact_cache(path: str, cache: Dict[str, np.ndarray]) -> None:
     texts = list(cache)
 
     def _write(tmp: str) -> None:
-        with open(tmp, "wb") as f:  # objek file: np.savez menambah ".npz" pada nama file tanpa ekstensi itu
+        with open(tmp, "wb") as f:  # file object: np.savez appends ".npz" to a file name without that extension
             vectors = np.stack([cache[t] for t in texts]) if texts else np.zeros((0, 0), dtype=np.float32)
             np.savez(f, model=np.array(_CACHE_MODEL_ID), texts=np.array(texts, dtype=str), vectors=vectors)
 
@@ -74,7 +75,7 @@ class GraphFactReranker:
     def __init__(self, embed_client, cache_path: Optional[str] = None):
         self.embed = embed_client
         self.cache_path = cache_path
-        self._cache: Optional[Dict[str, np.ndarray]] = None  # dimuat dari disk saat pertama dipakai
+        self._cache: Optional[Dict[str, np.ndarray]] = None  # loaded from disk on first use
 
     def _loaded(self) -> Dict[str, np.ndarray]:
         if self._cache is None:
@@ -85,7 +86,7 @@ class GraphFactReranker:
         if self.cache_path:
             try:
                 save_fact_cache(self.cache_path, self._cache)
-            except OSError as e:  # disk penuh / read-only: tetap jalan dengan cache di memori
+            except OSError as e:  # disk full / read-only: keep going with the in-memory cache
                 print(f"[Rerank] Cache embedding fakta tidak tersimpan ({e})")
 
     def _embed_missing(self, texts: List[str]) -> int:
@@ -98,8 +99,8 @@ class GraphFactReranker:
         return len(missing)
 
     def warm(self, graph) -> Dict[str, int]:
-        """Isi cache untuk SEMUA fakta graph (dipanggil di akhir build) dan buang teks yang tak ada lagi di
-        graph. Hanya fakta yang belum ada di cache yang di-embed, jadi build ulang korpus yang mirip cepat."""
+        """Fill the cache for ALL graph facts (called at the end of the build) and drop texts no longer in the
+        graph. Only facts not yet in the cache are embedded, so rebuilding a similar corpus is fast."""
         texts = all_fact_texts(graph)
         cache = self._loaded()
         wanted = set(texts)
@@ -118,7 +119,7 @@ class GraphFactReranker:
         return [float(np.dot(q, self._cache[t])) for t in texts]
 
     def select(self, trav: Dict[str, Any], query: str, max_rels: int) -> Dict[str, Any]:
-        """Hasil traverse() lengkap -> salinan dengan <= max_rels relasi, terurut menurut relevansi."""
+        """Full traverse() result -> a copy with <= max_rels relations, ordered by relevance."""
         rels = trav.get("relationships") or []
         if "error" in trav or not rels:
             return trav
@@ -133,7 +134,7 @@ class GraphFactReranker:
             else:
                 hop2.append(i)
 
-        by_score = lambda idx: sorted(idx, key=lambda i: -scores[i])  # sorted() stabil untuk skor sama
+        by_score = lambda idx: sorted(idx, key=lambda i: -scores[i])  # sorted() is stable for equal scores
         hop1_cap = max(1, int(max_rels * HOP1_SHARE))
         kept: List[int] = []
         for members in sorted(groups.values(), key=lambda m: -max(scores[i] for i in m)):

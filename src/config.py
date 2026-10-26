@@ -9,72 +9,72 @@ from dotenv import load_dotenv
 load_dotenv()
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-# LiteLLM (src/llm/llm_client.py): nama model pakai prefix provider. Groq opsional — tanpa key
-# atau model, alias "general" berjalan tanpa fallback.
+# LiteLLM (src/llm/llm_client.py): model names carry the provider prefix. Groq is optional — without a key
+# or a model, the "general" alias runs without a fallback.
 GEMINI_MODEL = os.getenv("GEMINI_MODEL") or "gemini/gemini-flash-lite-latest"
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GROQ_MODEL = os.getenv("GROQ_MODEL") or None
 
 # --- Constants ---
-# Embedding Model (lokal; GPU bila tersedia, selain itu CPU)
-# bge-m3: multilingual (korpus Inggris, pertanyaan sering Indonesia), tanpa trust_remote_code, MIT.
+# Embedding model (local; GPU when available, otherwise CPU)
+# bge-m3: multilingual (English corpus, questions often in Indonesian), no trust_remote_code, MIT.
 EMBEDDING_MODEL_NAME = "BAAI/bge-m3"
-# Revisi (commit) model yang dipin: perubahan bobot di hub tidak boleh mengubah ruang embedding diam-diam.
-# Nilai ini = snapshot yang membangun korpus saat ini. Mengubahnya (atau model di atas) berarti korpus
-# harus dibangun ulang — manifest (src/security/integrity.py) akan menolak start bila tidak cocok.
+# Pinned model revision (commit): a weight change on the hub must not silently change the embedding space.
+# This value = the snapshot that built the current corpus. Changing it (or the model above) means the corpus
+# must be rebuilt — the manifest (src/security/integrity.py) refuses to start on a mismatch.
 EMBEDDING_MODEL_REVISION = "5617a9f61b028005a4858fdac845db406aefb181"
 EMBEDDING_DIMENSION = 1024  # bge-m3
-# "auto" = cuda bila torch versi CUDA terpasang dan GPU terdeteksi, selain itu cpu. Vektor tetap fp32
-# supaya build (mis. di GPU) dan query (mis. server di CPU) berada di ruang yang sama.
+# "auto" = cuda if a CUDA build of torch is installed and a GPU is detected, otherwise cpu. Vectors stay fp32
+# so a build (e.g. on GPU) and queries (e.g. the server on CPU) live in the same space.
 EMBEDDING_DEVICE = os.getenv("EMBEDDING_DEVICE", "auto")  # auto | cpu | cuda
-EMBEDDING_MAX_SEQ_LENGTH = 1024  # chunk 2000 karakter ~500 token; tak pernah melebihi batas model sendiri
+EMBEDDING_MAX_SEQ_LENGTH = 1024  # a 2000-character chunk is ~500 tokens; never exceeds the model's own limit
 EMBEDDING_BATCH_SIZE = 16
 
-# --- Security limits (lihat docs/SECURITY.md). Semua batas keras ada di kode, bukan di prompt. ---
-ANSWER_MAX_OUTPUT_TOKENS = 2048          # cap biaya/latensi jawaban akhir
-MAX_CHAT_QUERY_LENGTH = 500              # panjang pertanyaan maksimum di /api/chat
-MAX_CHAT_BODY_BYTES = 10_000             # ukuran body maksimum di /api/chat (juga untuk body chunked)
-CHAT_RATE_LIMIT_MAX = 8                  # per IP per jendela; 1 chat butuh >=12 dtk (2 panggilan + sleep 6)
+# --- Security limits (see docs/SECURITY.md). All hard limits live in code, not in the prompt. ---
+ANSWER_MAX_OUTPUT_TOKENS = 2048          # cap on the cost/latency of the final answer
+MAX_CHAT_QUERY_LENGTH = 500              # maximum question length in /api/chat
+MAX_CHAT_BODY_BYTES = 10_000             # maximum body size in /api/chat (also for chunked bodies)
+CHAT_RATE_LIMIT_MAX = 8                  # per IP per window; one chat takes >= 12 s (2 calls + sleep 6)
 CHAT_RATE_LIMIT_WINDOW_SECONDS = 60
-CHAT_MAX_CONCURRENT = 2                  # chat yang boleh berjalan bersamaan (tiap chat = 2 panggilan LLM)
-ALLOWED_HOSTS = ("127.0.0.1", "localhost")  # allow-list Host tetap (anti DNS rebinding)
-MAX_PDF_PAGES = 500                      # PDF di atas ini dilewati saat ingest
+CHAT_MAX_CONCURRENT = 2                  # chats allowed to run concurrently (each chat = 2 LLM calls)
+ALLOWED_HOSTS = ("127.0.0.1", "localhost")  # fixed Host allow-list (anti DNS rebinding)
+MAX_PDF_PAGES = 500                      # PDFs above this are skipped at ingest
 MAX_PDF_BYTES = 50 * 1024 * 1024
 
-# --- Ambang yang TERIKAT model embedding: kalibrasi ulang bila EMBEDDING_MODEL_NAME diganti ---
-# (sebaran skor cosine tiap model berbeda; lihat scripts/calibrate_embedding.py)
-# Dedup: pasangan entitas >= ambang dikirim ke LLM untuk dikonfirmasi (menentukan pemakaian kuota).
-# bge-m3 (kalibrasi 2026-10-21): 221 kandidat vs 267 dulu; merge benar lama >= 0.76, kebanyakan merge
-# keliru lama (versi model berbeda, hipernim) < 0.75. Dulu 0.85 untuk bge-small-en-v1.5.
+# --- Thresholds TIED to the embedding model: recalibrate when EMBEDDING_MODEL_NAME changes ---
+# (each model's cosine score distribution differs; see scripts/calibrate_embedding.py)
+# Dedup: entity pairs >= the threshold are sent to the LLM for confirmation (this determines quota usage).
+# bge-m3 (calibrated 2026-10-21): 221 candidates vs 267 before; correct merges used to be >= 0.76, most
+# wrong merges (different model versions, hypernyms) < 0.75. It used to be 0.85 for bge-small-en-v1.5.
 DEDUP_SIMILARITY_THRESHOLD = 0.75
-# Resolver lapis 4: node terdekat secara embedding dipakai bila kemiripannya >= ambang ini.
-# bge-m3: parafrase Indonesia yang benar >= 0.638, salah cocok teramati <= 0.600 (jarak tipis; cek ulang
-# dengan evaluate.py setelah build). Dulu 0.72 untuk bge-small-en-v1.5.
+# Resolver layer 4: the embedding-nearest node is used when its similarity is >= this threshold.
+# bge-m3: correct Indonesian paraphrases >= 0.638, wrong matches observed <= 0.600 (thin margin; recheck
+# with evaluate.py after a build). It used to be 0.72 for bge-small-en-v1.5.
 RESOLVER_SIM_THRESHOLD = 0.62
-# Jalur vektor (fallback chunk + thematic): hasil di bawah ambang dibuang; bila semuanya gugur, engine
-# menolak tanpa panggilan LLM. bge-m3 (kalibrasi 2026-10-23, cosine top-1): fallback relevan >= 0.563,
-# luar domain jelas <= 0.466 (kopi, cuaca, terjemahan); ResNet/ImageNet 0.529 sengaja lolos (ditolak oleh
-# aturan prompt jawaban). Ringkasan komunitas (berbahasa Inggris): tema >= 0.557, tetapi parafrase Indonesia
-# yang sah ("cara mengurangi sikap menjilat pada chatbot") hanya 0.485-0.499 -> 0.50 menolaknya (e2e
-# 2026-10-26); luar domain <= 0.405 (ResNet), resep 0.354. Lihat scripts/calibrate_retrieval.py.
+# Vector paths (chunk fallback + thematic): results below the threshold are dropped; if all of them fall away, the engine
+# refuses without an LLM call. bge-m3 (calibrated 2026-10-23, top-1 cosine): relevant fallbacks >= 0.563,
+# clearly out-of-domain <= 0.466 (coffee, weather, translation); ResNet/ImageNet 0.529 deliberately passes (refused by the
+# answer prompt's rules). Community summaries (in English): themes >= 0.557, but legitimate Indonesian paraphrases
+# ("cara mengurangi sikap menjilat pada chatbot") score only 0.485-0.499 -> 0.50 rejects them (e2e
+# 2026-10-26); out-of-domain <= 0.405 (ResNet), recipe 0.354. See scripts/calibrate_retrieval.py.
 CHUNK_MIN_SIMILARITY = 0.50
 COMMUNITY_MIN_SIMILARITY = 0.44
 
-# --- Budget konteks graph per entitas (relasi yang disimpan GraphFactReranker) ---
-# Terukur: membagi budget (150//n) justru memotong sebelum hop-2 pada node hub, sehingga fakta seperti
-# Author->Institution hilang. 125/entitas sudah cukup untuk >1 entitas. Konstanta server: router tidak bisa
-# mengubahnya; `evaluate.py --budget N` menggantinya HANYA untuk eksperimen.
+# --- Graph context budget per entity (relations kept by GraphFactReranker) ---
+# Measured: splitting the budget (150//n) cut off hop-2 on hub nodes, so facts like
+# Author->Institution were lost. 125/entity is enough for >1 entity. A server constant: the router cannot
+# change it; `evaluate.py --budget N` overrides it ONLY for experiments.
 ENTITY_BUDGET_SINGLE = 150
 ENTITY_BUDGET_MULTI = 125
 
-# --- Community (graph-only; tidak menyentuh vector store chunk) ---
-# Louvain dijalankan atas graf ko-okurensi: dua entitas terhubung bila disebut di chunk yang sama.
-# Paper dikeluarkan (jadi hub, community = satu paper), Author/Institution juga (chunk pertama
-# memuat semua penulis + abstrak dan akan menyambung semuanya). Community < MIN_SIZE tidak
-# diringkas; node yang tersisa dianggap outlier.
+# --- Community (graph-only; does not touch the chunk vector store) ---
+# Louvain runs on the co-occurrence graph: two entities are linked when they are mentioned in the same chunk.
+# Paper is excluded (it becomes a hub, community = one paper), and so are Author/Institution (the first chunk
+# contains all the authors + the abstract and would connect everything). Communities < MIN_SIZE are not
+# summarized; the remaining nodes are treated as outliers.
 COMMUNITY_MIN_SIZE = 3
 COMMUNITY_EXCLUDED_TYPES = ("Paper", "Author", "Institution")
-COMMUNITY_SEED = 42  # Louvain acak; seed tetap = build reprodusibel
+COMMUNITY_SEED = 42  # Louvain is random; a fixed seed = a reproducible build
 
 # --- Post-extraction cleaning (graph quality; does NOT affect the vector store) ---
 MIN_ENTITY_NAME_LENGTH = 2  # Entities whose normalized name is shorter than this are dropped.
@@ -102,11 +102,11 @@ SECTION_FILTER_PATTERN = re.compile(
     re.IGNORECASE | re.MULTILINE,
 )
 
-# Posisi minimum (fraksi dokumen) sebuah heading terminal boleh dianggap sah.
-# Guard ini mencegah kata "References" yang muncul terlalu awal (mis. di daftar isi)
-# memotong badan paper. NILAI 0.5 TERLALU KETAT untuk paper modern: yang punya appendix
-# panjang menaruh References di ~29-47% dokumen, sehingga filter tidak pernah aktif dan
-# seluruh daftar pustaka + appendix ikut ter-chunk (boros kuota + noise sitasi).
+# Minimum position (fraction of the document) at which a terminal heading counts as valid.
+# This guard keeps the word "References" appearing too early (e.g. in the table of contents)
+# from cutting off the paper body. A VALUE OF 0.5 IS TOO STRICT for modern papers: those with a long
+# appendix put References at ~29-47% of the document, so the filter never fires and
+# the whole bibliography + appendix get chunked (wasting quota + citation noise).
 SECTION_FILTER_MIN_POSITION = 0.20
 
 # --- Paper metadata (B1 title injection + B2 model↔paper link) ---
@@ -115,7 +115,7 @@ SECTION_FILTER_MIN_POSITION = 0.20
 # Papers rarely use their own popular name (the VGG paper never writes "VGG-16"), so we rely on
 # the LLM's world knowledge for the model aliases — which generalizes to any paper corpus.
 PAPER_METADATA_PATH = "data/processed/paper_metadata.json"
-# Cache embedding teks fakta graph untuk rerank (query-time, turunan; aman dihapus kapan saja).
+# Embedding cache of graph fact texts for rerank (query-time, derived; safe to delete at any time).
 FACT_EMBEDDINGS_PATH = "data/processed/fact_embeddings.npz"
 
 
@@ -146,16 +146,16 @@ ENTITY_TYPES = Literal[
     "Metric", "Finding", "Limitation", "Task"
 ]
 
-# Relasi yang DITAWARKAN ke LLM (masuk skema ekstraksi).
+# Relations OFFERED to the LLM (part of the extraction schema).
 LLM_RELATION_TYPES = Literal[
     "uses_method", "uses_dataset", "uses_metric", "has_limitation", 
     "compares", "finds", "proposes_method", "criticizes", 
     "builds_on", "written_by", "affiliated_with", "mentioned_in",
     "addresses_task", "introduces_dataset", "evaluated_on",
 ]
-# Relasi yang boleh TERSIMPAN: + `related_to`, hanya dipakai saat menyelamatkan output LLM yang memuat
-# relasi di luar daftar (label aslinya disimpan di description). Sengaja tidak ditawarkan ke LLM supaya
-# tidak dipakai sebagai jalan pintas.
+# Relations that may be STORED: + `related_to`, used only when salvaging LLM output that contains
+# relations outside the list (the original label is kept in the description). Deliberately not offered to the LLM so
+# it is not used as a shortcut.
 RELATION_TYPES = Literal[LLM_RELATION_TYPES, "related_to"]
 
 
@@ -184,8 +184,8 @@ class Entity(BaseModel):
     description: Optional[str] = Field(None, description="A brief description of the entity based on the context.")
     _source_chunk_id: Optional[str] = PrivateAttr(default=None)
 
-# Catatan: docstring kelas Pydantic ikut masuk skema JSON yang dikirim ke LLM, jadi pakai komentar.
-# Relasi seperti yang boleh ditulis LLM (skema ekstraksi).
+# Note: Pydantic class docstrings end up in the JSON schema sent to the LLM, so use comments.
+# Relations as the LLM may write them (extraction schema).
 class LLMRelationship(BaseModel):
     source_entity: str = Field(description="The name of the source entity.")
     target_entity: str = Field(description="The name of the target entity.")
@@ -193,11 +193,11 @@ class LLMRelationship(BaseModel):
     description: Optional[str] = Field(None, description="A brief explanation of how they are related in this context.")
     _source_chunk_id: Optional[str] = PrivateAttr(default=None)
 
-# Relasi tersimpan (cleaner/dedup/graph): juga menerima `related_to` hasil penyelamatan.
+# Stored relations (cleaner/dedup/graph): also accept the `related_to` produced by salvaging.
 class Relationship(LLMRelationship):
     relation_type: RELATION_TYPES = Field(description="The type of relationship between source and target.")
 
-# Skema yang DIKIRIM ke LLM saat ekstraksi (tanpa `related_to`).
+# Schema SENT to the LLM during extraction (without `related_to`).
 class LLMExtractedKnowledge(BaseModel):
     entities: List[Entity] = Field(default_factory=list, description="List of all distinct entities found in the text.")
     relationships: List[LLMRelationship] = Field(default_factory=list, description="List of relationships connecting the extracted entities.")
@@ -214,7 +214,7 @@ class DedupDecision(BaseModel):
 
 # --- Schema for Query Routing ---
 
-# off_topic: jelas bukan pertanyaan tentang riset/paper -> engine menolak tanpa retrieval & tanpa LLM kedua.
+# off_topic: clearly not a question about research/papers -> the engine refuses without retrieval and without a second LLM call.
 INTENT_TYPES = Literal["entity", "thematic", "counting", "structural", "off_topic"]
 
 class QueryRouting(BaseModel):
