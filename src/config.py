@@ -60,6 +60,13 @@ RESOLVER_SIM_THRESHOLD = 0.62
 CHUNK_MIN_SIMILARITY = 0.50
 COMMUNITY_MIN_SIMILARITY = 0.44
 
+# --- Budget konteks graph per entitas (relasi yang disimpan GraphFactReranker) ---
+# Terukur: membagi budget (150//n) justru memotong sebelum hop-2 pada node hub, sehingga fakta seperti
+# Author->Institution hilang. 125/entitas sudah cukup untuk >1 entitas. Konstanta server: router tidak bisa
+# mengubahnya; `evaluate.py --budget N` menggantinya HANYA untuk eksperimen.
+ENTITY_BUDGET_SINGLE = 150
+ENTITY_BUDGET_MULTI = 125
+
 # --- Community (graph-only; tidak menyentuh vector store chunk) ---
 # Louvain dijalankan atas graf ko-okurensi: dua entitas terhubung bila disebut di chunk yang sama.
 # Paper dikeluarkan (jadi hub, community = satu paper), Author/Institution juga (chunk pertama

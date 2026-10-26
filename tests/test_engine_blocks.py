@@ -152,3 +152,16 @@ def test_off_topic_message_counts_as_refusal_in_eval():
     from evaluate import REFUSAL
     from src.engine import OFF_TOPIC_MESSAGE
     assert any(p in OFF_TOPIC_MESSAGE.lower() for p in REFUSAL)
+
+
+def test_entity_budget_is_read_from_config_at_query_time(monkeypatch):
+    from src import config
+    seen = []
+    rs = types.SimpleNamespace(resolve_entities=lambda q, context_query=None: ["A"])
+    tr = types.SimpleNamespace(traverse=lambda n, max_hops, max_rels: {"entity": n},
+                               format_traversal_context=lambda r: "x")
+    rr = types.SimpleNamespace(select=lambda trav, q, max_rels: seen.append(max_rels) or trav)
+    monkeypatch.setattr(config, "ENTITY_BUDGET_SINGLE", 80)
+    e = _engine(QueryRouting(intent="entity", search_query="A"), resolver=rs, traversal=tr, reranker=rr)
+    e.query("A?")
+    assert seen == [80]

@@ -10,6 +10,7 @@ from src.query.traversal import GraphTraversal
 from src.query.graph_rerank import GraphFactReranker
 from src.graph.analytics import GraphAnalytics
 from src.security.integrity import check_artifacts
+from src import config
 from src.config import FACT_EMBEDDINGS_PATH, load_paper_metadata
 
 # Jawaban tetap (tanpa panggilan LLM) bila pencarian vektor tidak menemukan apa pun di atas ambang
@@ -116,11 +117,9 @@ class GraphRAGEngine:
                 nodes = self.resolver.resolve_entities(user_query, context_query=user_query)
 
             if nodes:
-                # Budget konteks per entitas. Terukur: membagi budget (150//n) justru memotong
-                # sebelum hop-2 pada node hub, sehingga fakta seperti Author->Institution hilang.
-                # 125/entitas sudah cukup dan konteks total jenuh (~31K char untuk 2 entitas)
-                # karena dibatasi ukuran graph itu sendiri.
-                budget = 150 if len(nodes) == 1 else 125
+                # Budget konteks per entitas (lihat config). Dibaca saat query, bukan di-import, supaya
+                # `evaluate.py --budget` bisa menggantinya untuk eksperimen.
+                budget = config.ENTITY_BUDGET_SINGLE if len(nodes) == 1 else config.ENTITY_BUDGET_MULTI
                 print(f"[3] Traversing graph from {nodes} (multi-hop, budget {budget}/entitas)")
                 context_parts.append("Graph Context:")
                 for n in nodes:
