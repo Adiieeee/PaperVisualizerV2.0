@@ -33,6 +33,22 @@ class GraphAnalytics:
         sorted_degrees = sorted(degrees, key=lambda x: x[1], reverse=True)
         return sorted_degrees
 
+    def get_usage_stats(self, target_type: str) -> List[tuple]:
+        """
+        [(node, n_papers, degree)] for nodes of a type, ranked by the number of distinct Papers they are
+        linked to, then by degree (same exclusions as get_counting_stats), then name.
+
+        "Most used" means used by the most papers: by degree alone, EchoBench (23 models evaluated on
+        it, 1 paper) outranked hh-rlhf (used in 2 papers). get_counting_stats stays degree-only because
+        the visualizer's "most connected" insights mirror it.
+        """
+        degree = dict(self.get_counting_stats(target_type))
+        rows = []
+        for n, deg in degree.items():
+            papers = {m for m in self.graph.neighbors(n) if self.graph.nodes[m].get('type') == 'Paper'}
+            rows.append((n, len(papers), deg))
+        return sorted(rows, key=lambda r: (-r[1], -r[2], r[0]))
+
     def get_bridge_entities(self, min_papers: int = 2, top_n: int = 15) -> List[tuple]:
         """
         Cross-document 'bridges': non-Paper entities directly connected to >= min_papers

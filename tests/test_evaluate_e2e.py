@@ -79,3 +79,15 @@ def test_e2e_grading_uses_the_e2e_keys(monkeypatch, capsys):
     _fake_engine(monkeypatch, {"qm": "Strategi mitigasi: DPO-Validation"})
     evaluate.run_e2e(cases, "g")
     assert "[PASS" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("top, text, ok", [
+    (None, "B: 1 papers, 9 ; A: 2 papers, 3", True),
+    (["A"], "A: 2 papers, 3 ; B: 1 papers, 9", True),
+    (["A"], "B: 1 papers, 9 ; A: 2 papers, 3", False),   # ada di top-10 tetapi bukan peringkat pertama
+    (["X", "B"], "B: 1 papers, 9 ; A: 2 papers, 3", True),  # seri: salah satu cukup
+])
+def test_expected_top_checks_the_first_ranked_item(top, text, ok):
+    case = {"expected_top": top} if top else {}
+    assert evaluate.top_match(case, text) is ok
+    assert evaluate.grade(case, text, None)[0] is ok

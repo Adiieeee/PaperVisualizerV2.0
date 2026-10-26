@@ -41,8 +41,8 @@ def retrieval_context(case, resolver, traversal, analytics, reranker=None):
     """Reproduce the retrieval the engine would do for this intent — returns (text, resolved_node)."""
     intent = case["intent"]
     if intent == "counting":
-        stats = analytics.get_counting_stats(case["target_type"])[:10]
-        return " ; ".join(f"{n}: {d}" for n, d in stats), None
+        stats = analytics.get_usage_stats(case["target_type"])[:10]
+        return " ; ".join(f"{n}: {p} papers, {d}" for n, p, d in stats), None
     if intent == "structural":
         bridges = analytics.get_bridge_entities()
         return " ; ".join(f"{n} ({c} papers)" for n, _ps, c in bridges), None
@@ -79,8 +79,19 @@ def facts_match(case, text, e2e=False):
             and (not any_of or any(kw.lower() in text_l for kw in any_of)))
 
 
+def top_match(case, text):
+    """`expected_top` (counting): the FIRST ranked item must be one of these names (several when tied).
+    Presence in the top-10 alone cannot tell a correct ranking from a wrong one."""
+    top = case.get("expected_top")
+    if not top:
+        return True
+    # Items are "name: counts"; match the name only (rsplit: Paper titles contain ": " themselves).
+    first = (text or "").split(" ; ")[0].rsplit(": ", 1)[0].lower()
+    return any(t.lower() in first for t in top)
+
+
 def grade(case, text, node):
-    facts_ok = facts_match(case, text)
+    facts_ok = facts_match(case, text) and top_match(case, text)
     exp_node = case.get("expected_node")
     if exp_node is None:
         node_ok = True
@@ -123,6 +134,8 @@ def run_retrieval(cases, G):
             miss = [k for k in all_of if k.lower() not in (text or '').lower()]
             if any_of and not any(k.lower() in (text or '').lower() for k in any_of):
                 miss.append(f"one of {any_of}")
+            if not top_match(c, text):
+                miss.append(f"top item one of {c['expected_top']} (got {(text or '').split(' ; ')[0]!r})")
             print(f"    ↳ resolved={node!r} missing_facts={miss}")
     print("-" * 60)
     print(f"OVERALL (retrieval): {passed}/{len(graded)} = {passed/len(graded)*100:.0f}%")

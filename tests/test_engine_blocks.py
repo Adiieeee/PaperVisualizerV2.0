@@ -39,11 +39,11 @@ def _only_block(engine):
 
 
 def test_counting_is_graph_context():
-    an = types.SimpleNamespace(get_counting_stats=lambda t: [("SFT", 3), ("RLHF", 1)])
+    an = types.SimpleNamespace(get_usage_stats=lambda t: [("SFT", 2, 3), ("RLHF", 1, 1)])
     e = _engine(QueryRouting(intent="counting", target_type="Method"), analytics=an)
     assert e.query("metode terbanyak?") == "jawaban"
     kind, text = _only_block(e)
-    assert kind == KIND_GRAPH and "SFT: 3 connections" in text
+    assert kind == KIND_GRAPH and "SFT: 2 papers, 3 connections" in text and "number of papers" in text
 
 
 def test_structural_is_graph_context():

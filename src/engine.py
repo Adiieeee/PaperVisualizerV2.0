@@ -77,12 +77,14 @@ class GraphRAGEngine:
             if not routing.target_type:
                 return "Error: Could not determine which entity type to count."
 
-            stats = self.analytics.get_counting_stats(routing.target_type)
-            # Take top 10 to avoid context overflow
+            stats = self.analytics.get_usage_stats(routing.target_type)
+            # Take top 10 to avoid context overflow. Both numbers are shown, so "most connected"
+            # questions can still be answered from the connection counts.
             top_stats = stats[:10]
-            context_parts.append(f"Top {routing.target_type}s by number of connections:")
-            for node, degree in top_stats:
-                context_parts.append(f"- {node}: {degree} connections")
+            context_parts.append(
+                f"Top {routing.target_type}s by number of papers they appear in (then connections):")
+            for node, n_papers, degree in top_stats:
+                context_parts.append(f"- {node}: {n_papers} papers, {degree} connections")
 
         elif routing.intent == "thematic":
             print("[2] Executing Vector Search on Community Summaries")
