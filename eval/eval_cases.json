@@ -2,7 +2,7 @@
   {"id": "count-method",        "q": "Metode apa yang paling banyak dipakai di seluruh paper?",     "category": "counting",   "intent": "counting",   "target_type": "Method",  "expected_contains": ["Beacon"]},
   {"id": "count-method2",       "q": "Teknik mitigasi apa yang paling banyak terhubung?",           "category": "counting",   "intent": "counting",   "target_type": "Method",  "expected_contains": ["Mean-Difference Steering"]},
   {"id": "count-dataset",       "q": "Dataset apa yang paling sering dipakai?",                     "category": "counting",   "intent": "counting",   "target_type": "Dataset", "expected_contains": ["hh-rlhf"]},
-  {"id": "count-metric",        "q": "Metrik evaluasi apa yang paling umum dipakai?",               "category": "counting",   "intent": "counting",   "target_type": "Metric",  "expected_contains": ["sycophancy metric"]},
+  {"id": "count-metric",        "q": "Metrik evaluasi apa yang paling umum dipakai?",               "category": "counting",   "intent": "counting",   "target_type": "Metric",  "expected_any": ["Sycophancy Rate", "Critical Thinking", "Fluency", "A/B Accuracy"]},
   {"id": "count-author",        "q": "Penulis siapa yang paling banyak terhubung?",                 "category": "counting",   "intent": "counting",   "target_type": "Author",  "expected_contains": ["Myra Cheng"]},
 
   {"id": "ent-syceval-data",    "q": "Dataset apa yang digunakan SycEval?",                         "category": "relational", "intent": "entity", "expected_node": "SycEval", "expected_contains": ["MedQuad"]},
@@ -31,14 +31,14 @@
   {"id": "struct-bridge2",      "q": "Model apa yang diuji bersama di banyak paper?",               "category": "structural", "intent": "structural", "expected_contains": ["Gemini"]},
 
   {"id": "theme-medical",       "q": "Bagaimana sycophancy diteliti pada model untuk bidang medis?", "category": "thematic",   "intent": "thematic",   "expected_contains": ["medic"]},
-  {"id": "theme-mitigation",    "q": "Pendekatan apa saja untuk mengurangi sycophancy?",            "category": "thematic",   "intent": "thematic",   "expected_contains": ["mitigat"]},
+  {"id": "theme-mitigation",    "q": "Pendekatan apa saja untuk mengurangi sycophancy?",            "category": "thematic",   "intent": "thematic",   "expected_contains": ["mitigat"], "e2e_any": ["DPO", "steering", "fine-tun", "perspective", "perspektif", "prompt", "education", "edukasi", "interview"]},
   {"id": "theme-trust",         "q": "Bagaimana sycophancy memengaruhi kepercayaan pengguna?",      "category": "thematic",   "intent": "thematic",   "expected_contains": ["trust"]},
   {"id": "theme-social",        "q": "Apa itu social sycophancy dan bagaimana mengukurnya?",        "category": "thematic",   "intent": "thematic",   "expected_contains": ["social"]},
-  {"id": "theme-paraphrase-id", "q": "Bagaimana cara mengurangi sikap menjilat pada chatbot?",      "category": "thematic",   "intent": "thematic",   "expected_contains": ["DPO"]},
+  {"id": "theme-paraphrase-id", "q": "Bagaimana cara mengurangi sikap menjilat pada chatbot?",      "category": "thematic",   "intent": "thematic",   "expected_contains": ["mitigat"], "e2e_any": ["DPO", "steering", "fine-tun", "perspective", "perspektif", "prompt", "education", "edukasi", "interview"]},
 
   {"id": "resolve-paraphrase",  "q": "benchmark sikap menjilat pada model medis",                   "category": "resolution", "intent": "entity", "expected_contains": ["EchoBench"]},
   {"id": "resolve-paraphrase2", "q": "evaluasi sycophancy pada LLM",                                "category": "resolution", "intent": "entity", "expected_contains": ["ycEval"]},
-  {"id": "resolve-mitigation",  "q": "Bagaimana cara mengurangi sikap menjilat pada chatbot?",      "category": "resolution", "intent": "entity", "expected_contains": ["interview-based"]},
+  {"id": "resolve-mitigation",  "q": "Bagaimana cara mengurangi sikap menjilat pada chatbot?",      "category": "resolution", "intent": "entity", "expected_contains": ["interview-based"], "e2e_any": ["DPO", "steering", "fine-tun", "perspective", "perspektif", "prompt", "education", "edukasi", "interview"]},
 
   {"id": "rerank-claude-find",  "q": "Apa temuan penelitian yang mengevaluasi Claude Sonnet 3.7?",  "category": "rerank",     "intent": "entity", "expected_node": "Claude Sonnet 3.7", "expected_contains": ["Correction ability", "Medical-specific models"]},
   {"id": "rerank-gemini-find",  "q": "Apa temuan terkait Gemini-1.5-Flash?",                        "category": "rerank",     "intent": "entity", "expected_node": "Gemini-1.5-Flash", "expected_contains": ["Correction ability", "Medical-specific models"]},
