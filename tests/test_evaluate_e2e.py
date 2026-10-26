@@ -91,3 +91,44 @@ def test_expected_top_checks_the_first_ranked_item(top, text, ok):
     case = {"expected_top": top} if top else {}
     assert evaluate.top_match(case, text) is ok
     assert evaluate.grade(case, text, None)[0] is ok
+
+
+def test_repeat_reports_per_case_rate_and_unstable_cases(monkeypatch, capsys):
+    answers = iter(["pakai MedQuad", "salah", "pakai MedQuad"])
+
+    class _Engine:
+        def __init__(self, graph_path):
+            self.llm = types.SimpleNamespace(last_model=None)
+
+        def query(self, q):
+            self.llm.last_model = "gemini-flash-lite-latest"
+            return next(answers)
+
+    monkeypatch.setattr(src.engine, "GraphRAGEngine", _Engine)
+    evaluate.run_e2e([{"id": "a", "q": "qa", "expected_contains": ["MedQuad"]}], "g", repeat=3)
+    out = capsys.readouterr().out
+    assert "a#1" in out and "a#3" in out
+    assert "E2E OVERALL: 2/3" in out and "a 2/3" in out and "Unstable (passed some runs, not all): 1: a" in out
+
+
+def test_quota_stops_all_remaining_repeats(monkeypatch, capsys):
+    _fake_engine(monkeypatch, {"qa": DailyQuotaExceededError("habis"), "qb": "x", "qc": "x"})
+    evaluate.run_e2e(CASES, "g", repeat=2)
+    out = capsys.readouterr().out
+    assert out.count("[QUOTA") == 1 and "Not run: 6 case(s)" in out
+
+
+def test_only_keeps_eval_order_and_rejects_unknown_ids():
+    cases = [{"id": "a"}, {"id": "b"}, {"id": "c"}]
+    assert [c["id"] for c in evaluate.select_cases(cases, "c, a")] == ["a", "c"]
+    assert evaluate.select_cases(cases, None) == cases
+    with pytest.raises(SystemExit, match="zz"):
+        evaluate.select_cases(cases, "a,zz")
+
+
+def test_budget_override_scales_multi_entity_budget(monkeypatch):
+    from src import config
+    monkeypatch.setattr(config, "ENTITY_BUDGET_SINGLE", 150)
+    monkeypatch.setattr(config, "ENTITY_BUDGET_MULTI", 125)
+    evaluate.set_budget(80)
+    assert (config.ENTITY_BUDGET_SINGLE, config.ENTITY_BUDGET_MULTI) == (80, 67)

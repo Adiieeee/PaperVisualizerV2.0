@@ -14,6 +14,7 @@ Usage:
 """
 import argparse
 import json
+import sys
 from collections import defaultdict
 
 import networkx as nx
@@ -23,6 +24,7 @@ from src.vectorstore.chromadb_store import ChromaStore
 from src.query.resolver import QueryResolver
 from src.query.traversal import GraphTraversal
 from src.query.graph_rerank import GraphFactReranker
+from src import config
 from src.config import FACT_EMBEDDINGS_PATH
 from src.graph.analytics import GraphAnalytics
 from src.security.integrity import ArtifactIntegrityError, check_artifacts
@@ -51,7 +53,7 @@ def retrieval_context(case, resolver, traversal, analytics, reranker=None):
     # entity — cerminkan engine: bisa >1 entitas (roadmap 1.2), budget konteks dibagi
     nodes = resolver.resolve_entities(case["q"], context_query=case["q"])
     if nodes:
-        budget = 150 if len(nodes) == 1 else 125
+        budget = config.ENTITY_BUDGET_SINGLE if len(nodes) == 1 else config.ENTITY_BUDGET_MULTI
         reranker = reranker or GraphFactReranker(resolver.embed, cache_path=FACT_EMBEDDINGS_PATH)
         text = "\n".join(
             traversal.format_traversal_context(
@@ -138,7 +140,10 @@ def run_retrieval(cases, G):
                 miss.append(f"top item one of {c['expected_top']} (got {(text or '').split(' ; ')[0]!r})")
             print(f"    ↳ resolved={node!r} missing_facts={miss}")
     print("-" * 60)
-    print(f"OVERALL (retrieval): {passed}/{len(graded)} = {passed/len(graded)*100:.0f}%")
+    if graded:
+        print(f"OVERALL (retrieval): {passed}/{len(graded)} = {passed/len(graded)*100:.0f}%")
+    else:
+        print("OVERALL (retrieval): no retrieval-graded case selected")
     print("By category: " + " | ".join(f"{cat} {p}/{t}" for cat, (p, t) in sorted(by_cat.items())))
     # `expected_empty`: out-of-domain questions whose vector results must all fall below the relevance
     # threshold, so the engine refuses without an LLM call. Scored apart from the retrieval score above.
@@ -157,52 +162,73 @@ def run_retrieval(cases, G):
               + ", ".join(c['id'] for c in negatives))
 
 
-def run_e2e(cases, graph_path):
+def run_e2e(cases, graph_path, repeat=1):
+    """Full engine.query per case, `repeat` times each. Gemini is not deterministic even at temperature 0
+    (identical contexts gave different answers in >=5 cases between two runs), so changes that move a
+    few cases should be judged on per-case pass rates over repeated runs, not on one run."""
     from src.engine import GraphRAGEngine
     from src.llm.llm_client import DailyQuotaExceededError
     engine = GraphRAGEngine(graph_path)
     passed, graded, errors, fallback = 0, 0, [], []
+    per_case = {}  # id -> [passes, runs]
+    total = len(cases) * repeat
+    stopped = False
     for c in cases:
-        engine.llm.last_model = None
-        try:
-            ans = engine.query(c["q"])
-        except DailyQuotaExceededError:
-            # No model left today: stop cleanly and still report what was graded so far.
-            print(f"[{'QUOTA':14}] {c['id']}: daily quota exhausted and no fallback left; stopping the run.")
+        for r in range(1, repeat + 1):
+            tag = c["id"] if repeat == 1 else f"{c['id']}#{r}"
+            engine.llm.last_model = None
+            try:
+                ans = engine.query(c["q"])
+            except DailyQuotaExceededError:
+                # No model left today: stop cleanly and still report what was graded so far.
+                print(f"[{'QUOTA':14}] {tag}: daily quota exhausted and no fallback left; stopping the run.")
+                stopped = True
+                break
+            except Exception as e:
+                # One bad case (empty answer, provider error after retries) must not discard the whole run.
+                errors.append(tag)
+                per_case.setdefault(c["id"], [0, 0])[1] += 1
+                print(f"[{'ERROR':14}] {tag}: {c['q']}")
+                print(f"    {type(e).__name__}: {str(e)[:180]}")
+                continue
+            al = ans.lower()
+            # must_not_contain: injected/forbidden content (e.g. a leaked system-prompt marker, the answer
+            # to a hijacked task) must NOT appear even when the rest of the answer looks fine.
+            leaked = [k for k in c.get("must_not_contain", []) if k.lower() in al]
+            if c.get("expected_refuse"):
+                ok = any(p in al for p in REFUSAL) and not leaked  # must decline, not fabricate / obey
+                label = "REFUSED-ok" if ok else ("LEAKED" if leaked else "HALLUCINATED?")
+            else:
+                ok = facts_match(c, ans, e2e=True) and not leaked
+                label = "PASS" if ok else ("LEAKED" if leaked else "FAIL")
+            passed += int(ok)
+            graded += 1
+            stats = per_case.setdefault(c["id"], [0, 0])
+            stats[0] += int(ok)
+            stats[1] += 1
+            # The last call of the case answered on the fallback provider: not comparable with a Gemini baseline.
+            model = engine.llm.last_model
+            on_fallback = bool(model) and "gemini" not in model.lower()
+            if on_fallback:
+                fallback.append(tag)
+            print(f"[{label:14}] {tag}: {c['q']}" + (f"  (model: {model})" if on_fallback else ""))
+            if not ok:
+                print(f"    answer: {ans[:180]}...")
+                if leaked:
+                    print(f"    forbidden content present: {leaked}")
+        if stopped:
             break
-        except Exception as e:
-            # One bad case (empty answer, provider error after retries) must not discard the whole run.
-            errors.append(c["id"])
-            print(f"[{'ERROR':14}] {c['id']}: {c['q']}")
-            print(f"    {type(e).__name__}: {str(e)[:180]}")
-            continue
-        al = ans.lower()
-        # must_not_contain: injected/forbidden content (e.g. a leaked system-prompt marker, the answer
-        # to a hijacked task) must NOT appear even when the rest of the answer looks fine.
-        leaked = [k for k in c.get("must_not_contain", []) if k.lower() in al]
-        if c.get("expected_refuse"):
-            ok = any(p in al for p in REFUSAL) and not leaked  # must decline, not fabricate / obey
-            label = "REFUSED-ok" if ok else ("LEAKED" if leaked else "HALLUCINATED?")
-        else:
-            ok = facts_match(c, ans, e2e=True) and not leaked
-            label = "PASS" if ok else ("LEAKED" if leaked else "FAIL")
-        passed += int(ok)
-        graded += 1
-        # The last call of the case answered on the fallback provider: not comparable with a Gemini baseline.
-        model = engine.llm.last_model
-        on_fallback = bool(model) and "gemini" not in model.lower()
-        if on_fallback:
-            fallback.append(c["id"])
-        print(f"[{label:14}] {c['id']}: {c['q']}" + (f"  (model: {model})" if on_fallback else ""))
-        if not ok:
-            print(f"    answer: {ans[:180]}...")
-            if leaked:
-                print(f"    forbidden content present: {leaked}")
     print()
-    print(f"E2E OVERALL: {passed}/{len(cases)} = {passed/len(cases)*100:.0f}% "
+    print(f"E2E OVERALL: {passed}/{total} = {passed/total*100:.0f}% "
           f"(includes router accuracy + generation + anti-hallucination)")
-    if graded + len(errors) < len(cases):
-        print(f"  Not run: {len(cases) - graded - len(errors)} case(s) (run stopped early).")
+    if repeat > 1:
+        print(f"  Per case ({repeat} runs each): "
+              + ", ".join(f"{cid} {p}/{n}" for cid, (p, n) in per_case.items()))
+        unstable = [cid for cid, (p, n) in per_case.items() if 0 < p < n]
+        print(f"  Unstable (passed some runs, not all): {len(unstable)}"
+              + (": " + ", ".join(unstable) if unstable else ""))
+    if graded + len(errors) < total:
+        print(f"  Not run: {total - graded - len(errors)} case(s) (run stopped early).")
     if errors:
         print(f"  Errors (counted as failed): {len(errors)}: " + ", ".join(errors))
     if fallback:
@@ -210,18 +236,48 @@ def run_e2e(cases, graph_path):
               + ", ".join(fallback))
 
 
+def select_cases(cases, only):
+    """`--only id1,id2`: keep those cases in eval order; an unknown id is an error, not a silent skip."""
+    if not only:
+        return cases
+    wanted = [i.strip() for i in only.split(",") if i.strip()]
+    known = {c["id"] for c in cases}
+    unknown = [i for i in wanted if i not in known]
+    if unknown:
+        raise SystemExit(f"Unknown case id(s) for --only: {', '.join(unknown)}")
+    return [c for c in cases if c["id"] in set(wanted)]
+
+
+def set_budget(n):
+    """`--budget N` (experiments only): entity context budget N for one entity, scaled for several."""
+    config.ENTITY_BUDGET_SINGLE = n
+    config.ENTITY_BUDGET_MULTI = max(1, round(n * 125 / 150))
+
+
 def main():
+    # Results appear line by line even when redirected to a file (no need to remember `python -u`).
+    sys.stdout.reconfigure(line_buffering=True)
     ap = argparse.ArgumentParser()
     ap.add_argument("--e2e", action="store_true", help="run full engine.query (uses LLM quota)")
+    ap.add_argument("--only", help="comma-separated case ids to run")
+    ap.add_argument("--repeat", type=int, default=1, help="e2e: run each case N times (per-case pass rate)")
+    ap.add_argument("--budget", type=int, help="experiment: override the entity context budget (default 150)")
     args = ap.parse_args()
+    if args.repeat < 1:
+        ap.error("--repeat must be >= 1")
+    if args.repeat > 1 and not args.e2e:
+        ap.error("--repeat only applies to --e2e (retrieval is deterministic)")
 
     with open(CASES_PATH, encoding="utf-8") as f:
-        cases = json.load(f)
+        cases = select_cases(json.load(f), args.only)
+    if args.budget:
+        set_budget(args.budget)
+        print(f"[Experiment] entity budget {config.ENTITY_BUDGET_SINGLE} (multi {config.ENTITY_BUDGET_MULTI})")
     G = nx.read_graphml(GRAPH_PATH)
     print(f"Loaded {len(cases)} eval cases; graph = {G.number_of_nodes()} nodes.\n")
 
     if args.e2e:
-        run_e2e(cases, GRAPH_PATH)
+        run_e2e(cases, GRAPH_PATH, repeat=args.repeat)
     else:
         run_retrieval(cases, G)
 
