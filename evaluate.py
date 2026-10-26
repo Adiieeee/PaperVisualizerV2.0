@@ -61,7 +61,13 @@ def retrieval_context(case, resolver, traversal, analytics, reranker=None):
             for n in nodes
         )
         return text, nodes[0]
-    return " ".join(h["text"] for h in resolver.search_chunks(case["q"])), None  # local vector fallback
+    # No node: a question naming only the corpus topic uses community summaries (as the engine does),
+    # anything else the local chunk vector fallback.
+    if resolver.mentions_topic(case["q"]):
+        summaries = resolver.search_communities(case["q"])
+        if summaries:
+            return " ".join(summaries), None
+    return " ".join(h["text"] for h in resolver.search_chunks(case["q"])), None
 
 
 def expected_keys(case, e2e=False):

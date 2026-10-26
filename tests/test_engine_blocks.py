@@ -77,6 +77,7 @@ def test_entity_found_is_graph_context():
 def test_entity_not_found_falls_back_to_raw_text_context():
     rs = types.SimpleNamespace(
         resolve_entities=lambda q, context_query=None: [],
+        mentions_topic=lambda q: False,
         search_chunks=lambda q: [{"text": "potongan teks PDF", "doc_id": "a.pdf", "score": 0.7}],
     )
     e = _engine(QueryRouting(intent="entity", search_query="x"), resolver=rs,
@@ -87,7 +88,8 @@ def test_entity_not_found_falls_back_to_raw_text_context():
 
 
 def test_no_relevant_chunk_refuses_without_llm_call():
-    rs = types.SimpleNamespace(resolve_entities=lambda q, context_query=None: [], search_chunks=lambda q: [])
+    rs = types.SimpleNamespace(resolve_entities=lambda q, context_query=None: [], search_chunks=lambda q: [],
+                               mentions_topic=lambda q: False)
     e = _engine(QueryRouting(intent="entity", search_query="kopi"), resolver=rs)
     assert e.query("cara membuat kopi?") == NO_CONTEXT_MESSAGE
     assert e.llm.calls == []
@@ -165,3 +167,44 @@ def test_entity_budget_is_read_from_config_at_query_time(monkeypatch):
     e = _engine(QueryRouting(intent="entity", search_query="A"), resolver=rs, traversal=tr, reranker=rr)
     e.query("A?")
     assert seen == [80]
+
+
+def _no_node_resolver(mentions_topic, communities, chunks):
+    return types.SimpleNamespace(
+        resolve_entities=lambda q, context_query=None: [],
+        mentions_topic=lambda q: mentions_topic,
+        search_communities=lambda q: communities,
+        search_chunks=lambda q: chunks,
+    )
+
+
+def test_broad_topic_question_without_node_uses_community_summaries():
+    rs = _no_node_resolver(True, ["ringkasan mitigasi"], [{"text": "chunk", "doc_id": None, "score": 0.7}])
+    e = _engine(QueryRouting(intent="entity", search_query="sycophancy"), resolver=rs)
+    e.query("Pendekatan apa saja untuk mengurangi sycophancy?")
+    kind, text = _only_block(e)
+    assert kind == KIND_COMMUNITY and "ringkasan mitigasi" in text and "chunk" not in text
+
+
+def test_topic_question_without_relevant_community_falls_back_to_chunks():
+    rs = _no_node_resolver(True, [], [{"text": "potongan", "doc_id": None, "score": 0.7}])
+    e = _engine(QueryRouting(intent="entity", search_query="sycophancy"), resolver=rs)
+    e.query("sycophancy?")
+    kind, text = _only_block(e)
+    assert kind == KIND_TEXT and "potongan" in text
+
+
+def test_non_topic_question_without_node_goes_straight_to_chunks():
+    def boom(q):
+        raise AssertionError("communities must not be searched without the topic word")
+
+    rs = _no_node_resolver(False, None, [{"text": "potongan", "doc_id": None, "score": 0.7}])
+    rs.search_communities = boom
+    e = _engine(QueryRouting(intent="entity", search_query="x"), resolver=rs)
+    e.query("benchmark sikap menjilat?")
+    assert _only_block(e)[0] == KIND_TEXT
+
+
+def test_topic_question_with_nothing_relevant_refuses_without_llm():
+    e = _engine(QueryRouting(intent="entity", search_query="sycophancy"), resolver=_no_node_resolver(True, [], []))
+    assert e.query("sycophancy?") == NO_CONTEXT_MESSAGE and e.llm.calls == []

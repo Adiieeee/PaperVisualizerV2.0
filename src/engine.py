@@ -129,15 +129,28 @@ class GraphRAGEngine:
                     trav_result = self.reranker.select(trav_result, user_query, budget)
                     context_parts.append(self.traversal.format_traversal_context(trav_result))
             else:
-                print("[3] Node not found, falling back to Chunk search")
-                kind = KIND_TEXT
-                chunks = self.resolver.search_chunks(search_q)
-                if not chunks:
-                    print("[4] No chunk above the relevance threshold")
-                    return NO_CONTEXT_MESSAGE
-                context_parts.append("Raw Text Chunks Context:")
-                for i, c in enumerate(chunks):
-                    context_parts.append(format_chunk(i + 1, c, self.paper_titles))
+                # A question naming only the corpus topic ("ways to reduce sycophancy?") is a broad one,
+                # whatever the router said: answer it from the community summaries, searched with the
+                # user's own question (the router's search_query is just the topic word).
+                summaries = []
+                if self.resolver.mentions_topic(user_query):
+                    summaries = self.resolver.search_communities(user_query)
+                if summaries:
+                    print("[3] Broad question about the corpus topic: using community summaries")
+                    kind = KIND_COMMUNITY
+                    context_parts.append("Thematic Community Context:")
+                    for i, s in enumerate(summaries):
+                        context_parts.append(f"[{i+1}] {s}")
+                else:
+                    print("[3] Node not found, falling back to Chunk search")
+                    kind = KIND_TEXT
+                    chunks = self.resolver.search_chunks(search_q)
+                    if not chunks:
+                        print("[4] No chunk above the relevance threshold")
+                        return NO_CONTEXT_MESSAGE
+                    context_parts.append("Raw Text Chunks Context:")
+                    for i, c in enumerate(chunks):
+                        context_parts.append(format_chunk(i + 1, c, self.paper_titles))
 
         # Assemble Context
         assembled_context = "\n\n".join(context_parts)
