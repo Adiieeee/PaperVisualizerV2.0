@@ -49,6 +49,7 @@ retrieving the relevant facts and passages and generating an answer from them.
 - [Security and privacy](#security-and-privacy)
 - [Limitations](#limitations)
 - [Troubleshooting](#troubleshooting)
+- [License](#license)
 
 ---
 
@@ -433,3 +434,14 @@ This is a **personal tool meant to run on your own machine**, not a public servi
 | Answers mention papers you removed | Old chunks are still in ChromaDB: `python corpus.py clear` (after `backup`) and rebuild |
 | Chat in the snapshot HTML says it cannot reach the server | Expected: the chat only works through `python server.py` |
 | Changes to the graph do not show up | Restart `server.py`; it loads the graph once at startup |
+
+---
+
+## License
+
+The code in this repository is released under the [MIT License](LICENSE).
+
+Dependencies keep their own licenses. Note that **PyMuPDF** (used to read the PDFs) is licensed under **AGPL-3.0**
+(or a commercial license from Artifex): if you distribute this application together with PyMuPDF or offer it as a
+network service, its AGPL terms apply to that part. The other dependencies and the `BAAI/bge-m3` embedding model use
+permissive licenses (MIT, BSD, Apache-2.0). The papers you index remain under their authors' copyright.
