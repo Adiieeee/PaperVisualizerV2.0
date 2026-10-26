@@ -56,3 +56,26 @@ def test_answers_from_the_fallback_model_are_flagged(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "(model: openai/gpt-oss-120b)" in out
     assert "not comparable with a Gemini baseline: 1: a" in out
+
+
+@pytest.mark.parametrize("case, text, retrieval_ok, e2e_ok", [
+    ({"expected_contains": ["a", "b"]}, "a b", True, True),                        # kasus lama: semua harus ada
+    ({"expected_contains": ["a", "b"]}, "a", False, False),
+    ({"expected_any": ["x", "y"]}, "ada y", True, True),                           # salah satu cukup
+    ({"expected_any": ["x", "y"]}, "kosong", False, False),
+    ({"expected_contains": ["a"], "expected_any": ["x"]}, "a", False, False),      # keduanya berlaku
+    ({"expected_contains": ["mitigat"], "e2e_any": ["DPO", "mitigasi"]}, "mitigasi", False, True),  # override e2e
+    ({"expected_contains": ["mitigat"], "e2e_any": ["DPO"]}, "mitigation", True, False),
+    ({"expected_contains": ["x"], "e2e_contains": []}, "apa saja", False, True),   # override kosong = lolos
+    ({}, "apa saja", True, True),
+])
+def test_facts_match_all_any_and_e2e_override(case, text, retrieval_ok, e2e_ok):
+    assert evaluate.facts_match(case, text) is retrieval_ok
+    assert evaluate.facts_match(case, text, e2e=True) is e2e_ok
+
+
+def test_e2e_grading_uses_the_e2e_keys(monkeypatch, capsys):
+    cases = [{"id": "m", "q": "qm", "expected_contains": ["mitigat"], "e2e_any": ["DPO", "steering"]}]
+    _fake_engine(monkeypatch, {"qm": "Strategi mitigasi: DPO-Validation"})
+    evaluate.run_e2e(cases, "g")
+    assert "[PASS" in capsys.readouterr().out

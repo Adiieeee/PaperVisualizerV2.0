@@ -62,9 +62,25 @@ def retrieval_context(case, resolver, traversal, analytics, reranker=None):
     return " ".join(h["text"] for h in resolver.search_chunks(case["q"])), None  # local vector fallback
 
 
-def grade(case, text, node):
+def expected_keys(case, e2e=False):
+    """(all_of, any_of) for a case. `expected_contains`: every keyword must appear; `expected_any`: at least
+    one (e.g. several items tied at the top). In e2e mode `e2e_contains` / `e2e_any` replace both when
+    either is set: the answer may be Indonesian while the retrieved context is English, or the router may
+    pick another path than the case's intent."""
+    if e2e and ("e2e_contains" in case or "e2e_any" in case):
+        return case.get("e2e_contains", []), case.get("e2e_any", [])
+    return case.get("expected_contains", []), case.get("expected_any", [])
+
+
+def facts_match(case, text, e2e=False):
     text_l = (text or "").lower()
-    facts_ok = all(kw.lower() in text_l for kw in case.get("expected_contains", []))
+    all_of, any_of = expected_keys(case, e2e)
+    return (all(kw.lower() in text_l for kw in all_of)
+            and (not any_of or any(kw.lower() in text_l for kw in any_of)))
+
+
+def grade(case, text, node):
+    facts_ok = facts_match(case, text)
     exp_node = case.get("expected_node")
     if exp_node is None:
         node_ok = True
@@ -103,7 +119,10 @@ def run_retrieval(cases, G):
         print(f"{c['id']:22} {c['category']:11} {'ok' if node_ok else 'MISS':6} "
               f"{'ok' if facts_ok else 'MISS':6} {'PASS' if ok else 'FAIL'}")
         if not ok:
-            miss = [k for k in c.get('expected_contains', []) if k.lower() not in (text or '').lower()]
+            all_of, any_of = expected_keys(c)
+            miss = [k for k in all_of if k.lower() not in (text or '').lower()]
+            if any_of and not any(k.lower() in (text or '').lower() for k in any_of):
+                miss.append(f"one of {any_of}")
             print(f"    ↳ resolved={node!r} missing_facts={miss}")
     print("-" * 60)
     print(f"OVERALL (retrieval): {passed}/{len(graded)} = {passed/len(graded)*100:.0f}%")
@@ -152,7 +171,7 @@ def run_e2e(cases, graph_path):
             ok = any(p in al for p in REFUSAL) and not leaked  # must decline, not fabricate / obey
             label = "REFUSED-ok" if ok else ("LEAKED" if leaked else "HALLUCINATED?")
         else:
-            ok = all(kw.lower() in al for kw in c.get("expected_contains", [])) and not leaked
+            ok = facts_match(c, ans, e2e=True) and not leaked
             label = "PASS" if ok else ("LEAKED" if leaked else "FAIL")
         passed += int(ok)
         graded += 1
