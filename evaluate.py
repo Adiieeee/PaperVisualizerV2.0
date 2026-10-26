@@ -127,10 +127,23 @@ def run_retrieval(cases, G):
 
 def run_e2e(cases, graph_path):
     from src.engine import GraphRAGEngine
+    from src.llm.llm_client import DailyQuotaExceededError
     engine = GraphRAGEngine(graph_path)
-    passed = 0
+    passed, graded, errors, fallback = 0, 0, [], []
     for c in cases:
-        ans = engine.query(c["q"])
+        engine.llm.last_model = None
+        try:
+            ans = engine.query(c["q"])
+        except DailyQuotaExceededError:
+            # No model left today: stop cleanly and still report what was graded so far.
+            print(f"[{'QUOTA':14}] {c['id']}: daily quota exhausted and no fallback left; stopping the run.")
+            break
+        except Exception as e:
+            # One bad case (empty answer, provider error after retries) must not discard the whole run.
+            errors.append(c["id"])
+            print(f"[{'ERROR':14}] {c['id']}: {c['q']}")
+            print(f"    {type(e).__name__}: {str(e)[:180]}")
+            continue
         al = ans.lower()
         # must_not_contain: injected/forbidden content (e.g. a leaked system-prompt marker, the answer
         # to a hijacked task) must NOT appear even when the rest of the answer looks fine.
@@ -142,13 +155,27 @@ def run_e2e(cases, graph_path):
             ok = all(kw.lower() in al for kw in c.get("expected_contains", [])) and not leaked
             label = "PASS" if ok else ("LEAKED" if leaked else "FAIL")
         passed += int(ok)
-        print(f"[{label:14}] {c['id']}: {c['q']}")
+        graded += 1
+        # The last call of the case answered on the fallback provider: not comparable with a Gemini baseline.
+        model = engine.llm.last_model
+        on_fallback = bool(model) and "gemini" not in model.lower()
+        if on_fallback:
+            fallback.append(c["id"])
+        print(f"[{label:14}] {c['id']}: {c['q']}" + (f"  (model: {model})" if on_fallback else ""))
         if not ok:
             print(f"    answer: {ans[:180]}...")
             if leaked:
                 print(f"    forbidden content present: {leaked}")
-    print(f"\nE2E OVERALL: {passed}/{len(cases)} = {passed/len(cases)*100:.0f}% "
+    print()
+    print(f"E2E OVERALL: {passed}/{len(cases)} = {passed/len(cases)*100:.0f}% "
           f"(includes router accuracy + generation + anti-hallucination)")
+    if graded + len(errors) < len(cases):
+        print(f"  Not run: {len(cases) - graded - len(errors)} case(s) (run stopped early).")
+    if errors:
+        print(f"  Errors (counted as failed): {len(errors)}: " + ", ".join(errors))
+    if fallback:
+        print(f"  Answered by the fallback model, not comparable with a Gemini baseline: {len(fallback)}: "
+              + ", ".join(fallback))
 
 
 def main():
