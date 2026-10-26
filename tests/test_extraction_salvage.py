@@ -1,4 +1,4 @@
-"""Ekstraksi: ulang sekali -> selamatkan sebagian (item valid terbanyak) -> gagal. Tanpa jaringan/kuota."""
+"""Extraction: retry once -> salvage part (most valid items) -> fail. No network/quota."""
 import json
 
 import pytest
@@ -15,22 +15,22 @@ def _out(entities, relationships=()):
 
 VALID = _out([{"name": P, "type": "Paper"}, {"name": LIM, "type": "Limitation"}],
              [{"source_entity": P, "target_entity": LIM, "relation_type": "has_limitation"}])
-# satu relasi di luar daftar -> seluruh output gagal validasi ketat
+# one relation outside the list -> the whole output fails strict validation
 BAD_REL = _out([{"name": P, "type": "Paper"}, {"name": "MedQuad", "type": "Dataset"}, {"name": LIM, "type": "Limitation"}],
                [{"source_entity": P, "target_entity": "MedQuad", "relation_type": "evaluates", "description": "on MedQuad"},
                 {"source_entity": P, "target_entity": LIM, "relation_type": "has_limitation"}])
-FEWER_BAD = _out([{"name": P, "type": "Paper"}, {"name": "X", "type": "Gadget"}])  # 1 entitas valid, 1 tipe salah
+FEWER_BAD = _out([{"name": P, "type": "Paper"}, {"name": "X", "type": "Gadget"}])  # 1 valid entity, 1 wrong type
 
 
 class _Seq:
-    """call_llm palsu: tiap panggilan mengembalikan teks berikutnya dari daftar."""
+    """Fake call_llm: each call returns the next text from the list."""
 
     def __init__(self, outputs):
         self.outputs, self.calls = list(outputs), []
 
     def __call__(self, messages, alias="general", schema=None, **kw):
         self.calls.append({"alias": alias, "schema": schema, **kw})
-        assert kw.get("validate") is False and schema is not None  # skema tetap dikirim, teks mentah kembali
+        assert kw.get("validate") is False and schema is not None  # the schema is still sent, raw text comes back
         return self.outputs[len(self.calls) - 1], "gemini-test"
 
 
@@ -54,13 +54,13 @@ def test_invalid_then_valid_is_retried(monkeypatch):
 
 
 def test_invalid_twice_salvages_the_output_with_most_valid_items(monkeypatch):
-    r, seq = _run(monkeypatch, [FEWER_BAD, BAD_REL])  # output ke-2 punya lebih banyak item valid
+    r, seq = _run(monkeypatch, [FEWER_BAD, BAD_REL])  # the 2nd output has more valid items
     assert (r.status, len(seq.calls)) == ("salvaged", 2)
     assert [e.name for e in r.knowledge.entities] == [P, "MedQuad", LIM]
     rels = {rel.relation_type: rel for rel in r.knowledge.relationships}
-    assert rels["related_to"].description == "[evaluates] on MedQuad"  # label asli disimpan
+    assert rels["related_to"].description == "[evaluates] on MedQuad"  # the original label is kept
     assert "has_limitation" in rels
-    assert r.dropped == 0  # relasi tak dikenal dipetakan, bukan dibuang
+    assert r.dropped == 0  # an unknown relation is mapped, not dropped
 
 
 def test_unknown_entity_type_is_dropped_and_counted():
@@ -80,7 +80,7 @@ def test_unreadable_twice_is_failed_after_exactly_two_calls(monkeypatch):
 
 
 def test_valid_empty_output_is_ok_not_failed(monkeypatch):
-    r, _ = _run(monkeypatch, [_out([])])  # chunk tanpa entitas (mis. hanya caption) itu sah
+    r, _ = _run(monkeypatch, [_out([])])  # a chunk without entities (e.g. only a caption) is legitimate
     assert r.status == "ok" and r.knowledge.entities == []
 
 

@@ -1,4 +1,4 @@
-"""llm_client: klasifikasi kuota, parsing, dan konfigurasi fallback. Tanpa jaringan/kuota (router di-fake)."""
+"""llm_client: quota classification, parsing, and fallback configuration. No network/quota (the router is faked)."""
 import json
 import os
 import subprocess
@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from pydantic import BaseModel
 
-from src.llm import llm_client as lc  # sebelum litellm: modul ini yang mematikan unduhan cost map
+from src.llm import llm_client as lc  # before litellm: this module is what disables the cost map download
 
 litellm = lc.litellm
 ROOT = Path(__file__).resolve().parent.parent
@@ -21,8 +21,8 @@ class _Decision(BaseModel):
 
 
 class _FakeRouter:
-    """`exc` = error dari Gemini (alias dedup/general); `backup_exc` = error dari Groq.
-    `with_groq=False` meniru konfigurasi tanpa GROQ_API_KEY/GROQ_MODEL."""
+    """`exc` = error from Gemini (alias dedup/general); `backup_exc` = error from Groq.
+    `with_groq=False` imitates a configuration without GROQ_API_KEY/GROQ_MODEL."""
 
     def __init__(self, content=None, exc=None, backup_exc=None, with_groq=True):
         self.content, self.exc, self.backup_exc, self.with_groq = content, exc, backup_exc, with_groq
@@ -68,7 +68,7 @@ print(len(attempts))
 
 
 def test_import_and_router_make_no_network_calls():
-    # Subprocess tanpa env dari conftest: membuktikan llm_client sendiri yang mematikan unduhan.
+    # Subprocess without the env from conftest: proves llm_client itself disables the download.
     env = {k: v for k, v in os.environ.items() if k != "LITELLM_LOCAL_MODEL_COST_MAP"}
     out = subprocess.run([sys.executable, "-c", _NO_NETWORK_PROBE], env=env, cwd=ROOT,
                          capture_output=True, text=True, timeout=120)
@@ -98,14 +98,14 @@ def test_per_minute_markers_are_not_daily(msg):
     assert not lc.is_daily_quota_error(_rate_limit(msg))
 
 
-# --- Kapan Groq dipakai: HANYA saat kuota harian Gemini habis, HANYA untuk alias general ---
+# --- When Groq is used: ONLY when Gemini's daily quota runs out, ONLY for the general alias ---
 
 def test_gemini_daily_quota_on_general_switches_to_groq():
     r = _FakeRouter(content=OK_JSON, exc=_rate_limit(GEMINI_DAILY))
     out, model = lc.call_llm(MSGS, alias="general", schema=_Decision, router=r)
     assert out.merged_name == "SGD" and model == "openai/gpt-oss-120b"
     assert r.aliases() == ["general", "general_backup"]
-    assert r.calls[1]["response_format"] == lc.response_format_for(_Decision)  # skema ikut ke Groq
+    assert r.calls[1]["response_format"] == lc.response_format_for(_Decision)  # the schema goes to Groq too
 
 
 def test_gemini_daily_quota_on_dedup_never_uses_groq():
@@ -122,7 +122,7 @@ def test_gemini_daily_quota_on_dedup_never_uses_groq():
     litellm.Timeout(message="timeout", llm_provider="gemini", model="x"),
 ])
 def test_transient_gemini_errors_do_not_use_groq(exc):
-    # Di-raise apa adanya -> tenacity di LLMService meretry ke Gemini dengan jeda.
+    # Re-raised as-is -> tenacity in LLMService retries on Gemini with a delay.
     r = _FakeRouter(content=OK_JSON, exc=exc)
     with pytest.raises(type(exc)):
         lc.call_llm(MSGS, alias="general", router=r)
@@ -153,7 +153,7 @@ def test_groq_per_minute_limit_is_reraised_for_retry():
 # --- Parsing ---
 
 def test_validate_false_returns_raw_text_but_still_sends_schema():
-    r = _FakeRouter(content='{"is_duplicate": "bukan bool"')  # tidak valid DAN terpotong
+    r = _FakeRouter(content='{"is_duplicate": "bukan bool"')  # invalid AND truncated
     out, model = lc.call_llm(MSGS, schema=_Decision, router=r, validate=False)
     assert out == '{"is_duplicate": "bukan bool"' and model == "gemini-flash-lite-latest"
     assert r.calls[0]["response_format"] == lc.response_format_for(_Decision)
@@ -172,7 +172,7 @@ def test_parse_failure_is_not_retried_by_default():
     r = _FakeRouter(content="bukan json")
     with pytest.raises(ValueError):
         lc.call_llm(MSGS, schema=_Decision, router=r)
-    assert len(r.calls) == 1  # tiap retry = request + kuota
+    assert len(r.calls) == 1  # every retry = a request + quota
 
 
 @pytest.mark.parametrize("empty", [None, ""])
@@ -182,8 +182,8 @@ def test_empty_text_returns_empty_string(empty):
 
 
 def test_gemini_schema_keeps_optional_fields_optional():
-    # Regresi terukur: kelas Pydantic mentah -> LiteLLM strict -> `description` jadi wajib dan
-    # Gemini menamai entitas berbeda dari jalur google-genai lama ("MedQuad dataset" -> "MedQuad").
+    # Measured regression: a raw Pydantic class -> LiteLLM strict -> `description` becomes required and
+    # Gemini names entities differently from the old google-genai path ("MedQuad dataset" -> "MedQuad").
     from litellm.llms.vertex_ai.gemini.vertex_and_google_ai_studio_gemini import VertexGeminiConfig
     from src.config import ExtractedKnowledge
     cfg = VertexGeminiConfig().map_openai_params(
@@ -192,13 +192,13 @@ def test_gemini_schema_keeps_optional_fields_optional():
     props = cfg["response_schema"]["properties"]
     assert props["entities"]["items"]["required"] == ["name", "type"]
     assert props["relationships"]["items"]["required"] == ["source_entity", "target_entity", "relation_type"]
-    assert "$ref" not in json.dumps(cfg["response_schema"])  # $defs dibongkar untuk Gemini
-    # Optional dikirim seperti google-genai: string nullable, bukan anyOf
+    assert "$ref" not in json.dumps(cfg["response_schema"])  # $defs are unpacked for Gemini
+    # Optional is sent like google-genai: a nullable string, not anyOf
     desc = props["entities"]["items"]["properties"]["description"]
     assert desc["type"] == "string" and desc["nullable"] is True and "anyOf" not in desc
 
 
-# --- Konfigurasi router ---
+# --- Router configuration ---
 
 def test_router_without_groq_has_no_backup(monkeypatch):
     monkeypatch.setattr(lc, "GROQ_API_KEY", None)
@@ -209,7 +209,7 @@ def test_router_without_groq_has_no_backup(monkeypatch):
 
 
 def test_router_with_groq_has_no_automatic_fallbacks_or_cooldowns():
-    # Fallback otomatis Router akan memindah ke Groq pada SETIAP error; harus tidak ada.
+    # The Router's automatic fallback would switch to Groq on EVERY error; there must be none.
     r = lc.build_router(gemini_key="k", groq_key="g", groq_model="groq/openai/gpt-oss-20b")
     assert sorted(r.get_model_names()) == ["dedup", "general", "general_backup"]
     assert not r.fallbacks

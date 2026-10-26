@@ -1,6 +1,6 @@
-"""build_pipeline saat kuota harian habis SETELAH dedup: berhenti (bukan melewati diam-diam), checkpoint
-tetap ada, dan re-run tidak mengulang dedup. Semua dependensi berat dipalsukan; tidak ada file di
-data/processed yang disentuh. Tanpa jaringan/kuota."""
+"""build_pipeline when the daily quota runs out AFTER dedup: it stops (rather than silently skipping), the checkpoint
+remains, and a re-run does not repeat dedup. All heavy dependencies are faked; no file in
+data/processed is touched. No network/quota."""
 import json
 import os
 
@@ -33,7 +33,7 @@ class _FakeLLM:
         return PaperMeta(title="A Paper", models=[])
 
     extract_calls = 0
-    extract_status = {}  # teks -> status paksa (mis. "failed")
+    extract_status = {}  # text -> forced status (e.g. "failed")
 
     def extract_entities(self, text, paper_title=None):
         self.extract_calls += 1
@@ -78,7 +78,7 @@ class _FakeCollection:
 
 
 class _FakeChroma:
-    stored_dim = None  # dimensi vektor yang sudah tersimpan (None = store kosong)
+    stored_dim = None  # vector dimension already stored (None = empty store)
 
     def __init__(self):
         self.chunks_collection = _FakeCollection(self.stored_dim)
@@ -128,23 +128,23 @@ def test_summary_quota_stops_build_keeps_checkpoints_and_rerun_skips_dedup(env):
     env["llm"] = _FakeLLM(summary_quota=True)
     main.build_pipeline()
     assert env["llm"].dedup_calls == ["SGD optimizer"]
-    # Berhenti sebelum graph disimpan: graph/chroma/manifest lama tetap konsisten.
+    # Stops before the graph is saved: the old graph/chroma/manifest stay consistent.
     assert env["saved_graphs"] == []
     assert (env["tmp"] / "extraction_cache.json").exists()
     assert (env["tmp"] / "checkpoint_dedup.json").exists()
 
     env["llm"] = _FakeLLM()
     main.build_pipeline()
-    assert env["llm"].dedup_calls == []  # dedup tidak diulang (tanpa kuota, keputusan sama)
+    assert env["llm"].dedup_calls == []  # dedup is not repeated (no quota, same decisions)
     nodes = env["saved_graphs"][-1]
-    assert "Stochastic Gradient Descent" in nodes and "SGD optimizer" not in nodes  # nama kanonik
-    assert env["llm"].extract_calls == 0  # ekstraksi dipakai ulang dari arsip
-    assert (env["tmp"] / "extraction_cache.json").exists()  # arsip TIDAK dihapus setelah build sukses
+    assert "Stochastic Gradient Descent" in nodes and "SGD optimizer" not in nodes  # canonical name
+    assert env["llm"].extract_calls == 0  # extraction reused from the archive
+    assert (env["tmp"] / "extraction_cache.json").exists()  # the archive is NOT deleted after a successful build
     assert not (env["tmp"] / "checkpoint_dedup.json").exists()
 
 
 def test_embedding_dimension_mismatch_stops_before_any_llm_call(env, monkeypatch):
-    # Store dibangun model lain (384 dim); model palsu sekarang menghasilkan 2 dim.
+    # The store was built by another model (384 dims); the fake model now produces 2 dims.
     monkeypatch.setattr(_FakeChroma, "stored_dim", 384)
     env["llm"] = _FakeLLM()
     main.build_pipeline()
@@ -153,10 +153,10 @@ def test_embedding_dimension_mismatch_stops_before_any_llm_call(env, monkeypatch
 
 
 def test_matching_embedding_dimension_passes_preflight(env, monkeypatch):
-    monkeypatch.setattr(_FakeChroma, "stored_dim", 2)  # sama dengan _FakeEmbed
+    monkeypatch.setattr(_FakeChroma, "stored_dim", 2)  # same as _FakeEmbed
     env["llm"] = _FakeLLM()
     main.build_pipeline()
-    assert env["saved_graphs"]  # build berjalan sampai selesai
+    assert env["saved_graphs"]  # the build runs to completion
 
 
 def test_family_merge_quota_stops_build(env, monkeypatch):
@@ -183,11 +183,11 @@ def test_builder_family_merge_reraises_quota_but_skips_other_errors(monkeypatch)
 
     with pytest.raises(DailyQuotaExceededError):
         b.merge_family_aliases(_Llm(DailyQuotaExceededError("quota")))
-    b.merge_family_aliases(_Llm(RuntimeError("parse/transient")))  # tetap dilewati, tidak raise
+    b.merge_family_aliases(_Llm(RuntimeError("parse/transient")))  # still skipped, does not raise
     assert not b.graph.has_edge("ChatGPT", "GPT")
 
 
-# --- Arsip ekstraksi: pakai ulang, ekstrak ulang bila berubah, chunk gagal tidak dianggap selesai ---
+# --- Extraction archive: reuse, re-extract when changed, a failed chunk is not considered done --- ----
 
 def _cache(env):
     return json.loads((env["tmp"] / "extraction_cache.json").read_text(encoding="utf-8"))["chunks"]
@@ -226,13 +226,13 @@ def test_failed_chunk_stops_before_dedup_and_rerun_retries_only_it(env):
     env["llm"] = _FakeLLM()
     env["llm"].extract_status = {"teks 1": "failed"}
     main.build_pipeline()
-    assert env["llm"].dedup_calls == [] and env["saved_graphs"] == []  # berhenti sebelum dedup
+    assert env["llm"].dedup_calls == [] and env["saved_graphs"] == []  # stops before dedup
     assert _cache(env)[f"{DOC}_chunk_1"]["status"] == "failed"
 
-    env["llm"] = _FakeLLM()  # sekarang berhasil
+    env["llm"] = _FakeLLM()  # now succeeds
     main.build_pipeline()
-    assert env["llm"].extract_calls == 1  # hanya chunk yang gagal
-    assert env["saved_graphs"]  # build selesai
+    assert env["llm"].extract_calls == 1  # only the failed chunk
+    assert env["saved_graphs"]  # the build finishes
 
 
 def test_reextract_flag_ignores_the_archive(env):

@@ -1,4 +1,4 @@
-"""Skema relasi: apa yang ditawarkan ke LLM vs apa yang boleh tersimpan. Tanpa jaringan/kuota."""
+"""Relation schema: what is offered to the LLM vs what may be stored. No network/quota."""
 import json
 from typing import get_args
 
@@ -20,7 +20,7 @@ def test_llm_schema_offers_new_relations_but_not_related_to():
     enum = _relation_enum(config.LLMExtractedKnowledge)
     assert set(NEW) <= set(enum)
     assert "related_to" not in enum
-    # tidak boleh bocor lewat deskripsi/docstring juga
+    # must not leak through the description/docstring either
     assert "related_to" not in json.dumps(config.LLMExtractedKnowledge.model_json_schema())
 
 

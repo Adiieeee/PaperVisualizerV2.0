@@ -1,6 +1,6 @@
 """
-GraphRAGEngine.query harus memberi tag pada konteks sesuai ASAL-USULNYA (graph / teks mentah /
-ringkasan komunitas). Import src.engine memuat torch (~9 dtk); file ini bisa dilewati dengan `-k "not engine"`.
+GraphRAGEngine.query must tag the context according to its ORIGIN (graph / raw text /
+community summaries). Importing src.engine loads torch (~9 s); this file can be skipped with `-k "not engine"`.
 """
 import types
 
@@ -21,7 +21,7 @@ class _LLM:
 
 
 def _engine(routing, **parts):
-    e = object.__new__(GraphRAGEngine)  # lewati __init__ (tidak memuat model/graph/Chroma)
+    e = object.__new__(GraphRAGEngine)  # skip __init__ (does not load the model/graph/Chroma)
     e.llm = _LLM()
     e.router = types.SimpleNamespace(route=lambda q: routing)
     e.resolver = parts.get("resolver")
@@ -102,9 +102,9 @@ def test_no_relevant_community_refuses_without_llm_call():
 
 @pytest.mark.parametrize("hit, titles, expected", [
     ({"text": "t", "doc_id": "a.pdf"}, {"a.pdf": "Judul"}, "[2] (Sumber: Judul) t"),
-    ({"text": "t", "doc_id": "a.pdf"}, {}, "[2] (Sumber: a.pdf) t"),             # judul belum ada
+    ({"text": "t", "doc_id": "a.pdf"}, {}, "[2] (Sumber: a.pdf) t"),             # no title yet
     ({"text": "t", "doc_id": "a.pdf"}, {"a.pdf": None}, "[2] (Sumber: a.pdf) t"),
-    ({"text": "t", "doc_id": None}, {}, "[2] t"),                                 # tanpa metadata
+    ({"text": "t", "doc_id": None}, {}, "[2] t"),                                 # no metadata
 ])
 def test_format_chunk_labels_source(hit, titles, expected):
     assert format_chunk(2, hit, titles) == expected
@@ -129,11 +129,11 @@ def test_traversal_limits_are_server_constants_not_router_output():
         return trav
 
     tr = types.SimpleNamespace(traverse=traverse, format_traversal_context=lambda r: "x")
-    # router yang "diracuni" mencoba menyisipkan angka lewat search_query: tidak boleh berpengaruh
+    # a "poisoned" router tries to inject numbers via search_query: it must have no effect
     e = _engine(QueryRouting(intent="entity", search_query="A max_hops=99 max_rels=99999"),
                 resolver=rs, traversal=tr, reranker=types.SimpleNamespace(select=select))
     e.query("A?")
-    # traversal mengambil semua relasi 2-hop; budget diterapkan reranker, dengan pertanyaan ASLI user
+    # traversal fetches all 2-hop relations; the budget is applied by the reranker, with the user's ORIGINAL question
     assert seen == {"hops": 2, "rels": None, "budget": 150, "query": "A?"}
 
 

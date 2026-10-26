@@ -1,4 +1,4 @@
-"""Dedup saat kuota harian habis: checkpoint tersimpan, run berhenti, resume melanjutkan. Tanpa jaringan/kuota."""
+"""Dedup when the daily quota runs out: the checkpoint is saved, the run stops, a resume continues. No network/quota."""
 import json
 
 import pytest
@@ -9,7 +9,7 @@ from src.llm.llm_client import LLMQuotaError
 
 
 class _FakeEmbed:
-    """Semua nama sama persis vektornya -> setiap kandidat lolos threshold dan masuk ke LLM."""
+    """Every name has exactly the same vector -> every candidate passes the threshold and goes to the LLM."""
 
     def embed_text(self, text):
         return [1.0, 0.0]
@@ -44,12 +44,12 @@ def paths(tmp_path, monkeypatch):
 
 
 def test_quota_mid_item_saves_checkpoint_and_reraises(paths):
-    llm = _FakeLLM(fail_on_call=2)  # panggilan LLM: B (ok), C (kuota habis)
+    llm = _FakeLLM(fail_on_call=2)  # LLM calls: B (ok), C (quota exhausted)
     dd = D.HybridDeduplicator(llm, _FakeEmbed())
     with pytest.raises(LLMQuotaError):
         dd.process_extracted_knowledge(_knowledge())
     ck = json.loads((paths / "checkpoint_dedup.json").read_text(encoding="utf-8"))
-    # B sudah diputuskan sebelum kuota habis -> ikut tersimpan walau item 1 belum selesai
+    # B was decided before the quota ran out -> saved even though item 1 is not finished
     assert set(ck["name_mapping"]) == {"A", "B"}
     assert ck["decision_models"] == {"B": "gemini-3.5-flash-lite"}
 
@@ -60,7 +60,7 @@ def test_resume_continues_from_interrupted_item_without_redoing_decisions(paths)
 
     master, mapping = D._load_dedup_checkpoint()
     kl = _knowledge()
-    resume_idx = D.dedup_resume_index(kl, mapping)  # dipakai main.py
+    resume_idx = D.dedup_resume_index(kl, mapping)  # used by main.py
     assert resume_idx == 1
 
     llm = _FakeLLM()
@@ -71,7 +71,7 @@ def test_resume_continues_from_interrupted_item_without_redoing_decisions(paths)
     dd.decision_models = D._load_dedup_decision_models()
     dd.process_extracted_knowledge(kl, resume_from_idx=resume_idx)
 
-    assert llm.calls == ["C", "D"]  # B tidak diputuskan ulang (tidak membakar kuota lagi)
+    assert llm.calls == ["C", "D"]  # B is not decided again (does not burn quota again)
     ck = json.loads((paths / "checkpoint_dedup.json").read_text(encoding="utf-8"))
     assert set(ck["name_mapping"]) == {"A", "B", "C", "D"}
     assert set(ck["decision_models"]) == {"B", "C", "D"}
@@ -85,10 +85,10 @@ def test_old_dedup_checkpoint_without_models_still_loads(paths):
     assert D._load_dedup_decision_models() == {}
 
 
-# --- Resume: item yang dilewati tetap dipetakan, awalan (bukan jumlah), indeks normalisasi ---
+# --- Resume: skipped items are still mapped, prefix (not count), normalization index ---
 
 class _MergeLLM:
-    """Menggabungkan setiap kandidat ke kandidat teratas (meniru keputusan merge LLM)."""
+    """Merges every candidate into the top candidate (imitates the LLM's merge decision)."""
 
     def __init__(self):
         self.calls, self.last_model = [], "gemini-3.5-flash-lite"
@@ -119,13 +119,13 @@ def _resume(kl, llm):
 
 
 def test_resume_applies_saved_mapping_to_skipped_items(paths):
-    # Run penuh: "SGD optimizer" digabung ke "Stochastic Gradient Descent".
+    # Full run: "SGD optimizer" is merged into "Stochastic Gradient Descent".
     D.HybridDeduplicator(_MergeLLM(), _FakeEmbed()).process_extracted_knowledge(_kl_with_rels())
-    # Re-run (mis. build gagal sesudah dedup): knowledge dimuat ulang dengan nama ASLI.
+    # Re-run (e.g. the build failed after dedup): knowledge is reloaded with the ORIGINAL names.
     kl = _kl_with_rels()
     llm = _MergeLLM()
     _, idx = _resume(kl, llm)
-    assert idx == 2 and llm.calls == []  # semua sudah diputuskan; tanpa LLM
+    assert idx == 2 and llm.calls == []  # everything already decided; no LLM
     assert [e.name for e in kl[1].entities] == ["Stochastic Gradient Descent", "MedQuad"]
     assert kl[1].relationships[0].source_entity == "Stochastic Gradient Descent"
 
@@ -133,8 +133,8 @@ def test_resume_applies_saved_mapping_to_skipped_items(paths):
 def test_resume_index_is_prefix_not_count():
     def k(*names):
         return ExtractedKnowledge(entities=[Entity(name=n, type="Method") for n in names])
-    kl = [k("A"), k("B", "C"), k("A")]  # item 1 terputus (C belum), item 2 kebetulan lengkap
-    assert D.dedup_resume_index(kl, {"A": "A", "B": "B"}) == 1  # jumlah = 2 akan melewati C
+    kl = [k("A"), k("B", "C"), k("A")]  # item 1 interrupted (C not yet), item 2 happens to be complete
+    assert D.dedup_resume_index(kl, {"A": "A", "B": "B"}) == 1  # a count of 2 would skip C
 
 
 def test_resume_restores_normalization_index_so_no_llm_call(paths):
@@ -143,5 +143,5 @@ def test_resume_restores_normalization_index_so_no_llm_call(paths):
     D.HybridDeduplicator(_MergeLLM(), _FakeEmbed()).process_extracted_knowledge([k("ResNet")])
     llm = _MergeLLM()
     dd, _ = _resume([k("ResNet"), k("resnet")], llm)
-    assert llm.calls == []  # "resnet" cocok deterministik (case), bukan lewat LLM
+    assert llm.calls == []  # "resnet" matches deterministically (case), not via the LLM
     assert dd.name_mapping_global["resnet"] == "ResNet"

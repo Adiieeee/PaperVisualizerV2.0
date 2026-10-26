@@ -1,4 +1,4 @@
-"""Pemilihan device embedding (tanpa memuat model, tanpa jaringan)."""
+"""Choosing the embedding device (without loading the model, without network)."""
 import types
 
 import pytest
@@ -22,7 +22,7 @@ def test_auto_uses_gpu_only_when_available(fake_torch, cuda, expected):
 
 @pytest.mark.parametrize("setting, expected", [("cpu", "cpu"), ("CUDA", "cuda"), (" cpu ", "cpu")])
 def test_explicit_setting_is_respected(fake_torch, setting, expected):
-    fake_torch(True)  # GPU ada, tapi pilihan eksplisit menang
+    fake_torch(True)  # a GPU exists, but the explicit choice wins
     assert E.resolve_device(setting) == expected
 
 

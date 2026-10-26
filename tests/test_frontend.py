@@ -1,7 +1,7 @@
 """
-Frontend: nama entitas / relasi / deskripsi adalah keluaran LLM atas PDF tak tepercaya. Tes ini membangun
-halaman dari graph BERMUSUHAN lalu memeriksa dengan parser HTML sungguhan (yang memperlakukan <script>
-seperti browser) bahwa tidak ada markup yang lolos, tidak ada handler inline, dan tidak ada sumber eksternal.
+Frontend: entity / relation / description names are LLM output over untrusted PDFs. This test builds
+the page from a HOSTILE graph, then checks with a real HTML parser (which treats <script>
+like a browser) that no markup gets through, there are no inline handlers, and no external sources.
 """
 import base64
 import hashlib
@@ -30,10 +30,10 @@ def _graph(hostile: bool) -> nx.Graph:
         for i, n in enumerate(names):
             G.add_node(n, type="Method", description=f"desc {n}", source_paper=n)
         G.add_node("Paper A", type="Paper", description="")
-        G.add_node("Weird", type=ATTR_BREAK, description="")  # tipe node bermusuhan
+        G.add_node("Weird", type=ATTR_BREAK, description="")  # hostile node type
         for n in names:
             G.add_edge("Paper A", n, relation="uses_method", description=f"rel {n}")
-        G.add_edge("Paper A", "Weird", relation=ATTR_BREAK, description=BREAKOUT)  # relasi bermusuhan
+        G.add_edge("Paper A", "Weird", relation=ATTR_BREAK, description=BREAKOUT)  # hostile relation
     else:
         G.add_node("Paper A", type="Paper", description="")
         G.add_node("ResNet", type="Method", description="a net")
@@ -65,7 +65,7 @@ def pages():
 def test_hostile_names_do_not_change_the_document_structure(pages):
     benign, hostile = pages
     b, h = _parse(benign), _parse(hostile)
-    # jika payload lolos dari <script>, parser akan melihat tag <img>/<svg> baru
+    # if the payload escapes the <script>, the parser will see a new <img>/<svg> tag
     assert Counter(h.tags) == Counter(b.tags)
     assert "img" not in h.tags and "svg" not in h.tags
 
@@ -90,13 +90,13 @@ def test_no_external_resources_and_no_bootstrap_cdn(pages):
 def test_csp_hashes_match_every_inline_script(pages):
     for html in pages:
         hashes = inline_script_hashes(html)
-        assert len(hashes) >= 3  # bindings/utils, vis-network, init pyvis, panel kita
+        assert len(hashes) >= 3  # bindings/utils, vis-network, pyvis init, our panel
         csp = build_index_csp(html)
         script_src = re.search(r"script-src ([^;]+);", csp).group(1)
         assert "'unsafe-inline'" not in script_src and "'unsafe-eval'" not in script_src
         for h in hashes:
             assert f"'sha256-{h}'" in script_src
-        # hitung ulang secara independen dari isi <script> apa pun yang tidak punya src
+        # recompute independently from the content of any <script> without a src
         blocks = [m for m in re.findall(r"<script\b([^>]*)>(.*?)</script>", html, re.S | re.I) if "src=" not in m[0]]
         assert len(blocks) == len(hashes)
         d = hashlib.sha256(blocks[0][1].replace("\r\n", "\n").encode("utf-8")).digest()
@@ -107,10 +107,10 @@ def test_json_for_script_escapes_script_breakers():
     out = _json_for_script({"a": BREAKOUT, "b": COMMENT_TRICK, "c": "x & y", "d": chr(0x2028)})
     for ch in "<>&" + chr(0x2028):
         assert ch not in out
-    assert json.loads(out) == {"a": BREAKOUT, "b": COMMENT_TRICK, "c": "x & y", "d": chr(0x2028)}  # round-trip utuh
+    assert json.loads(out) == {"a": BREAKOUT, "b": COMMENT_TRICK, "c": "x & y", "d": chr(0x2028)}  # full round-trip
 
 
-# --- eksekusi renderMarkdown / esc di Node -------------------------------------------------------------
+# --- running renderMarkdown / esc in Node --- ---------------------------------------------------------------
 
 def _extract(html, start_marker, end_marker):
     a = html.index(start_marker)
@@ -150,9 +150,9 @@ def test_render_markdown_and_esc_are_xss_safe_when_executed(pages, tmp_path):
 
     for md in out["md"]:
         p = _parse(md)
-        assert set(p.tags) <= ALLOWED_TAGS, md   # hanya tag whitelist
-        assert p.attrs == [], md                 # tanpa atribut sama sekali
+        assert set(p.tags) <= ALLOWED_TAGS, md   # only whitelisted tags
+        assert p.attrs == [], md                 # no attributes at all
     for e in out["esc"]:
-        assert "<" not in e and ">" not in e and '"' not in e  # aman untuk teks dan atribut ber-kutip ganda
-    # teks asli tetap terbaca (di-escape, bukan dibuang)
+        assert "<" not in e and ">" not in e and '"' not in e  # safe for text and double-quoted attributes
+    # the original text is still readable (escaped, not dropped)
     assert "&lt;img" in out["md"][0]

@@ -54,7 +54,7 @@ def post(client, payload='{"query": "halo"}', headers=None):
     return client.post("/api/chat", content=payload, headers=h)
 
 
-# --- jalur normal ------------------------------------------------------------------------------
+# --- normal path --- ------------------------------------------------------------------------------
 
 def test_normal_chat_ok_and_headers():
     c, engine, limiter = make()
@@ -90,12 +90,12 @@ def test_docs_and_openapi_are_disabled():
         assert c.get(path).status_code == 404
 
 
-# --- urutan penolakan; engine & limiter tidak tersentuh oleh penolakan murah -------------------------
+# --- order of rejection; the engine & limiter are untouched by cheap rejections --- -------------------------
 
 def test_413_declared_size_before_anything_else():
     c, engine, limiter = make()
     big = '{"query": "' + "a" * 20000 + '"}'
-    r = post(c, big, headers={"Origin": "https://evil.example"})  # Origin buruk pun kalah oleh 413
+    r = post(c, big, headers={"Origin": "https://evil.example"})  # a bad Origin also loses to 413
     assert r.status_code == 413 and "answer" in r.json()
     assert limiter.checks == 0 and engine.calls == []
 
@@ -107,11 +107,11 @@ def test_415_content_type_required(ctype):
     r = c.post("/api/chat", content='{"query": "halo"}', headers=headers)
     assert r.status_code == 415 and r.json()["answer"]
     assert limiter.checks == 0 and engine.calls == []
-    assert r.headers["x-content-type-options"] == "nosniff"  # header ikut terpasang di penolakan
+    assert r.headers["x-content-type-options"] == "nosniff"  # headers are attached to the rejection too
 
 
 def test_drive_by_from_other_site_never_reaches_engine():
-    """Simulasi F3: situs lain menembak /api/chat. Tanpa Content-Type -> 415; dengan JSON -> Origin 403."""
+    """Simulation of F3: another site fires at /api/chat. No Content-Type -> 415; with JSON -> Origin 403."""
     c, engine, limiter = make()
     origin = {"Origin": "http://evil.example"}
     no_ctype = c.post("/api/chat", content='{"query": "kuras kuota"}', headers=origin)
@@ -130,12 +130,12 @@ def test_403_bad_origin(origin):
 
 
 def test_invalid_payload_still_consumes_rate_limit_and_never_calls_engine():
-    """Bug playbook A1: cek di handler dilewati payload invalid. Di sini limiter jalan SEBELUM validasi."""
+    """Playbook bug A1: the check in the handler is bypassed by an invalid payload. Here the limiter runs BEFORE validation."""
     c, engine, limiter = make()
     r = post(c, '{"query": "' + "x" * (config.MAX_CHAT_QUERY_LENGTH + 1) + '"}')
     assert r.status_code == 422 and limiter.checks == 1 and engine.calls == []
     assert r.json() == {"answer": server.MSG_INVALID}
-    assert "xxxx" not in r.text  # tidak memantulkan input
+    assert "xxxx" not in r.text  # does not reflect the input
 
 
 @pytest.mark.parametrize("payload", ['{"query": ""}', '{"query": "   "}', '{}', 'bukan json', '{"query": 5}'])
@@ -156,7 +156,7 @@ def test_429_rate_limit_with_retry_after():
 
 def test_429_when_concurrency_gate_is_full():
     gate = ConcurrencyGate(1)
-    assert gate.try_acquire()  # satu chat sedang berjalan
+    assert gate.try_acquire()  # one chat is running
     c, engine, _ = make(gate=gate)
     r = post(c)
     assert r.status_code == 429 and engine.calls == []
@@ -171,7 +171,7 @@ def test_gate_is_released_after_engine_error():
     assert gate.active == 0
 
 
-# --- Host allow-list (anti DNS rebinding) ------------------------------------------------------------
+# --- Host allow-list (anti DNS rebinding) --- ---------------------------------------------------------------
 
 def test_wrong_host_is_rejected_for_all_routes():
     c, engine, _ = make()
@@ -181,11 +181,11 @@ def test_wrong_host_is_rejected_for_all_routes():
 
 
 def test_dns_rebinding_same_host_and_origin_is_still_rejected():
-    """Kasus yang lolos dari cek 'Origin == Host request' milik playbook: keduanya milik penyerang."""
+    """A case that slips past the playbook's 'Origin == request Host' check: both belong to the attacker."""
     c, engine, _ = make()
     r = post(c, headers={"Host": "evil.example:8000", "Origin": "http://evil.example:8000"})
     assert r.status_code == 400 and engine.calls == []
-    assert r.headers["x-frame-options"] == "DENY"  # header keamanan juga di respons 400 dari TrustedHost
+    assert r.headers["x-frame-options"] == "DENY"  # security headers also on the 400 response from TrustedHost
 
 
 def test_localhost_host_is_accepted():
@@ -193,7 +193,7 @@ def test_localhost_host_is_accepted():
     assert c.get("/", headers={"Host": "localhost:8000"}).status_code == 200
 
 
-# --- error tidak bocor -----------------------------------------------------------------------------------
+# --- errors do not leak --- ---------------------------------------------------------------------------------
 
 def test_internal_errors_are_generic_and_logged(caplog):
     secret = r"C:\Users\adian\.env GEMINI_API_KEY=AQ.SECRET traceback"
@@ -202,7 +202,7 @@ def test_internal_errors_are_generic_and_logged(caplog):
         r = post(c)
     assert r.status_code == 503 and r.json() == {"answer": server.MSG_ERROR}
     assert "SECRET" not in r.text and "adian" not in r.text
-    assert any("chat failed" in rec.message for rec in caplog.records)  # detail hanya di log server
+    assert any("chat failed" in rec.message for rec in caplog.records)  # details only in the server log
 
 
 def test_quota_and_empty_response_have_fixed_messages():
@@ -222,7 +222,7 @@ def test_log_line_never_contains_the_question(caplog):
     assert "status=200" in text and "pertanyaan-rahasia-pengguna" not in text
 
 
-# --- body chunked (tanpa Content-Length): dites langsung di level ASGI -------------------------------------
+# --- chunked body (no Content-Length): tested directly at the ASGI level --- --------------------------------
 
 def _run_asgi(app, headers, chunks):
     sent, queue = [], list(chunks)
@@ -255,7 +255,7 @@ def test_chunked_body_over_limit_is_413_and_app_never_runs():
     async def inner(scope, receive, send):
         ran.append(True)
 
-    headers = [(b"content-type", b"application/json"), (b"transfer-encoding", b"chunked")]  # tanpa content-length
+    headers = [(b"content-type", b"application/json"), (b"transfer-encoding", b"chunked")]  # no content-length
     sent = _run_asgi(_guard(inner), headers, [b"a" * 600, b"b" * 600])
     assert sent[0]["status"] == 413 and ran == []
 
@@ -279,7 +279,7 @@ def test_chunked_body_within_limit_is_replayed_intact_to_app():
     assert got == [b'{"query": "halo"}'] and sent[0]["status"] == 200
 
 
-# --- unit: limiter / gate / CSP ---------------------------------------------------------------------------
+# --- unit: limiter / gate / CSP --- -------------------------------------------------------------------------
 
 def test_sliding_window_limiter_uses_window_and_keys():
     t = [0.0]
@@ -287,9 +287,9 @@ def test_sliding_window_limiter_uses_window_and_keys():
     assert lim.check("a")[0] and lim.check("a")[0]
     ok, retry = lim.check("a")
     assert not ok and 0 < retry <= 10
-    assert lim.check("b")[0]                # kunci lain tidak terpengaruh
+    assert lim.check("b")[0]                # other keys are unaffected
     t[0] = 10.5
-    assert lim.check("a")[0]                # jendela bergeser
+    assert lim.check("a")[0]                # the window slides
 
 
 def test_inline_script_hashes_skip_external_and_normalize_newlines():

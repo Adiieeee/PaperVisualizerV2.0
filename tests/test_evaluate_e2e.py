@@ -1,4 +1,4 @@
-"""evaluate.run_e2e: satu kasus yang error tidak boleh menghentikan seluruh run. Engine dipalsukan (tanpa kuota)."""
+"""evaluate.run_e2e: one case that errors must not stop the whole run. The engine is faked (no quota)."""
 import types
 
 import pytest
@@ -10,7 +10,7 @@ from src.llm.llm_service import EmptyResponseError
 
 
 def _fake_engine(monkeypatch, answers):
-    """answers: {pertanyaan: jawaban | Exception | (jawaban, model)}"""
+    """answers: {question: answer | Exception | (answer, model)}"""
     class _Engine:
         def __init__(self, graph_path):
             self.llm = types.SimpleNamespace(last_model=None)
@@ -38,7 +38,7 @@ def test_an_erroring_case_is_reported_and_the_run_continues(monkeypatch, capsys)
     evaluate.run_e2e(CASES, "g")
     out = capsys.readouterr().out
     assert "[ERROR" in out and "EmptyResponseError" in out
-    assert "[REFUSED-ok" in out  # kasus setelah error tetap dijalankan
+    assert "[REFUSED-ok" in out  # cases after the error still run
     assert "E2E OVERALL: 2/3" in out and "Errors (counted as failed): 1: b" in out
 
 
@@ -59,14 +59,14 @@ def test_answers_from_the_fallback_model_are_flagged(monkeypatch, capsys):
 
 
 @pytest.mark.parametrize("case, text, retrieval_ok, e2e_ok", [
-    ({"expected_contains": ["a", "b"]}, "a b", True, True),                        # kasus lama: semua harus ada
+    ({"expected_contains": ["a", "b"]}, "a b", True, True),                        # old-style case: all must be present
     ({"expected_contains": ["a", "b"]}, "a", False, False),
-    ({"expected_any": ["x", "y"]}, "ada y", True, True),                           # salah satu cukup
+    ({"expected_any": ["x", "y"]}, "ada y", True, True),                           # any one is enough
     ({"expected_any": ["x", "y"]}, "kosong", False, False),
-    ({"expected_contains": ["a"], "expected_any": ["x"]}, "a", False, False),      # keduanya berlaku
-    ({"expected_contains": ["mitigat"], "e2e_any": ["DPO", "mitigasi"]}, "mitigasi", False, True),  # override e2e
+    ({"expected_contains": ["a"], "expected_any": ["x"]}, "a", False, False),      # both apply
+    ({"expected_contains": ["mitigat"], "e2e_any": ["DPO", "mitigasi"]}, "mitigasi", False, True),  # e2e override
     ({"expected_contains": ["mitigat"], "e2e_any": ["DPO"]}, "mitigation", True, False),
-    ({"expected_contains": ["x"], "e2e_contains": []}, "apa saja", False, True),   # override kosong = lolos
+    ({"expected_contains": ["x"], "e2e_contains": []}, "apa saja", False, True),   # empty override = passes
     ({}, "apa saja", True, True),
 ])
 def test_facts_match_all_any_and_e2e_override(case, text, retrieval_ok, e2e_ok):
@@ -84,8 +84,8 @@ def test_e2e_grading_uses_the_e2e_keys(monkeypatch, capsys):
 @pytest.mark.parametrize("top, text, ok", [
     (None, "B: 1 papers, 9 ; A: 2 papers, 3", True),
     (["A"], "A: 2 papers, 3 ; B: 1 papers, 9", True),
-    (["A"], "B: 1 papers, 9 ; A: 2 papers, 3", False),   # ada di top-10 tetapi bukan peringkat pertama
-    (["X", "B"], "B: 1 papers, 9 ; A: 2 papers, 3", True),  # seri: salah satu cukup
+    (["A"], "B: 1 papers, 9 ; A: 2 papers, 3", False),   # in the top-10 but not ranked first
+    (["X", "B"], "B: 1 papers, 9 ; A: 2 papers, 3", True),  # tie: either is enough
 ])
 def test_expected_top_checks_the_first_ranked_item(top, text, ok):
     case = {"expected_top": top} if top else {}

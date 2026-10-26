@@ -1,9 +1,9 @@
 """
-Uji di browser SUNGGUHAN (Chrome/Edge headless) untuk sink innerHTML yang menerima data dari file graph
-(nama relasi, tipe node). Dilewati otomatis bila tidak ada Chrome/Edge. Tanpa jaringan, tanpa LLM.
+Tests in a REAL browser (headless Chrome/Edge) for the innerHTML sinks that receive data from the graph file
+(relation names, node types). Skipped automatically if there is no Chrome/Edge. No network, no LLM.
 
-Ada kontrol positif: kode LAMA (tanpa esc) dimasukkan kembali dan tes HARUS mendeteksi markup yang lolos —
-supaya jelas uji ini memang sensitif, bukan lulus karena tidak memeriksa apa-apa.
+There is a positive control: the OLD code (without esc) is put back and the test MUST detect the markup that gets
+through — so it is clear this test is sensitive, rather than passing because it checks nothing.
 """
 import json
 import os
@@ -51,8 +51,8 @@ window.addEventListener('load', function () { setTimeout(function () {
 def _hostile_html() -> str:
     G = nx.Graph()
     G.add_node("Paper A", type="Paper", description="")
-    G.add_node("Weird", type=PAYLOAD, description="")                                       # tipe node bermusuhan
-    G.add_edge("Paper A", "Weird", relation='x"><img src=x onerror=window.__pwn=1>', description="d")  # relasi bermusuhan
+    G.add_node("Weird", type=PAYLOAD, description="")                                       # hostile node type
+    G.add_edge("Paper A", "Weird", relation='x"><img src=x onerror=window.__pwn=1>', description="d")  # hostile relation
     return GraphVisualizer(G).build_html()
 
 
@@ -72,9 +72,9 @@ def _run(html: str, tmp_path, name: str) -> dict:
 def test_hostile_relation_and_type_do_not_inject_markup(tmp_path):
     out = _run(_hostile_html(), tmp_path, "fixed")
     assert "err" not in out, out
-    assert out["descImgs"] == 0          # sink updateEdgeDesc (fallback rel) di-escape
-    assert out["ddImgs"] == 0            # sink dropdown pencarian (tipe node) di-escape
-    assert all(not any(x.startswith("on") for x in attrs.split(",")) for attrs in out["optionAttrs"])  # tanpa handler
+    assert out["descImgs"] == 0          # updateEdgeDesc sink (fallback rel) is escaped
+    assert out["ddImgs"] == 0            # search dropdown sink (node type) is escaped
+    assert all(not any(x.startswith("on") for x in attrs.split(",")) for attrs in out["optionAttrs"])  # no handler
 
 
 def test_control_old_unescaped_code_is_detected(tmp_path):
@@ -82,4 +82,4 @@ def test_control_old_unescaped_code_is_detected(tmp_path):
     old = html.replace("|| esc(rel);", "|| rel;").replace('esc(metaOf(m.id).t || "")', '(metaOf(m.id).t || "")')
     assert old != html, "pola kode lama tidak ditemukan: perbarui kontrol ini bila visualizer.py berubah"
     out = _run(old, tmp_path, "old")
-    assert out["descImgs"] >= 1 and out["ddImgs"] >= 1, out  # markup bermusuhan lolos di kode lama
+    assert out["descImgs"] >= 1 and out["ddImgs"] >= 1, out  # hostile markup gets through in the old code

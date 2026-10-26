@@ -49,7 +49,7 @@ def _write(art):
     return m
 
 
-# --- tulis atomik -----------------------------------------------------------------------------------
+# --- atomic writes --- --------------------------------------------------------------------------------------
 
 def test_atomic_write_json_roundtrip_and_no_tmp_left(tmp_path):
     p = str(tmp_path / "sub" / "c.json")
@@ -64,12 +64,12 @@ def test_failed_write_keeps_previous_file_intact_and_cleans_tmp(tmp_path):
 
     def boom(tmp):
         with open(tmp, "w") as f:
-            f.write('{"v": 2, "trunc')  # tulis setengah lalu crash
+            f.write('{"v": 2, "trunc')  # write halfway then crash
         raise RuntimeError("crash di tengah tulis")
 
     with pytest.raises(RuntimeError):
         I.atomic_write(p, boom)
-    assert json.load(open(p)) == {"v": 1}      # file lama utuh: tidak pernah korup/terpotong
+    assert json.load(open(p)) == {"v": 1}      # the old file is intact: never corrupt/truncated
     assert not os.path.exists(p + ".tmp")
 
 
@@ -81,7 +81,7 @@ def test_atomic_write_for_graphml(tmp_path):
     assert nx.read_graphml(p).number_of_edges() == 1 and not os.path.exists(p + ".tmp")
 
 
-# --- manifest ---------------------------------------------------------------------------------------
+# --- manifest --- -------------------------------------------------------------------------------------------
 
 def test_manifest_records_model_revision_hash_and_counts(art):
     m = _write(art)
@@ -103,7 +103,7 @@ def test_missing_manifest_is_a_warning_not_an_error(art, capsys):
 
 
 def test_swapped_embedding_model_is_rejected_even_with_same_dimension(art, monkeypatch):
-    """Inti D1: model lain berdimensi SAMA tidak crash — tanpa manifest jadi jawaban salah yang percaya diri."""
+    """Core of D1: another model with the SAME dimension does not crash — without a manifest it becomes a confidently wrong answer."""
     _write(art)
     monkeypatch.setattr(config, "EMBEDDING_MODEL_NAME", "some/other-model-also-384d")
     with pytest.raises(I.ArtifactIntegrityError, match="Model embedding berubah"):
@@ -143,14 +143,14 @@ def test_modified_graph_file_is_rejected(art):
     G2 = nx.Graph()
     G2.add_edge("a", "b", relation="uses_method")
     G2.add_edge("a", "SISIPAN", relation="uses_method")
-    nx.write_graphml(G2, art.graph_path)  # file diubah setelah manifest ditulis
+    nx.write_graphml(G2, art.graph_path)  # the file changed after the manifest was written
     with pytest.raises(I.ArtifactIntegrityError, match="berubah sejak manifest"):
         I.check_artifacts(art.graph_path, G2, art.chroma, FakeEmbed(), art.manifest_path)
 
 
 def test_stale_chroma_content_is_rejected(art):
     _write(art)
-    stale = fake_chroma(chunks=250)  # sisa chunk dari korpus lama (build tidak menghapus Chroma)
+    stale = fake_chroma(chunks=250)  # leftover chunks from the old corpus (the build does not clear Chroma)
     with pytest.raises(I.ArtifactIntegrityError, match="clear"):
         I.check_artifacts(art.graph_path, art.G, stale, FakeEmbed(), art.manifest_path)
 
@@ -169,12 +169,12 @@ def test_unreadable_manifest_is_a_clear_error(art):
         I.check_artifacts(art.graph_path, art.G, art.chroma, FakeEmbed(), art.manifest_path)
 
 
-# --- arsip ekstraksi korup: berhenti dengan pesan jelas, jangan diam-diam mulai ulang -------------------------
+# --- corrupt extraction archive: stop with a clear message, do not silently start over --- ------------------
 
 def test_corrupt_extraction_archive_raises_clear_error(tmp_path, monkeypatch):
     import main
     bad = tmp_path / "extraction_cache.json"
-    bad.write_text('{"version": 1, "fingerprint": "x", "chunks": {"a": ', encoding="utf-8")  # terpotong
+    bad.write_text('{"version": 1, "fingerprint": "x", "chunks": {"a": ', encoding="utf-8")  # truncated
     monkeypatch.setattr(main, "EXTRACTION_CACHE_PATH", str(bad))
     with pytest.raises(I.ArtifactIntegrityError, match="corrupt"):
         main._load_extraction_cache("x")

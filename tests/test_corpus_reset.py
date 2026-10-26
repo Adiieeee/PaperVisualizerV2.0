@@ -1,4 +1,4 @@
-"""corpus.py reset-index: hapus indeks hasil build, pertahankan PDF + paper_metadata.json. Tanpa jaringan."""
+"""corpus.py reset-index: delete the build index, keep the PDFs + paper_metadata.json. No network."""
 import types
 
 import pytest

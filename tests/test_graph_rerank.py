@@ -1,4 +1,4 @@
-"""GraphFactReranker: pangkas & urutkan fakta graph menurut relevansi. Tanpa model: embedding dipalsukan."""
+"""GraphFactReranker: prune & order graph facts by relevance. No model: embeddings are faked."""
 import networkx as nx
 import pytest
 
@@ -7,7 +7,7 @@ from src.query.traversal import GraphTraversal
 
 
 class _Embed:
-    """Vektor 1-dimensi: skor fakta = bobot kata kunci pertama yang ditemukan di teksnya (query = [1.0])."""
+    """1-dimensional vector: fact score = weight of the first keyword found in its text (query = [1.0])."""
     def __init__(self, weights):
         self.weights = weights
         self.batches = []
@@ -62,7 +62,7 @@ def test_hop1_groups_are_kept_whole_and_ordered_by_best_member():
 
 
 def test_hop1_share_is_capped_and_lowest_groups_dropped_first():
-    # budget 5 -> jatah hop-1 = int(5 * 0.6) = 3
+    # budget 5 -> hop-1 allowance = int(5 * 0.6) = 3
     rels = [_rel("E", "a1", "A", 1), _rel("E", "a2", "A", 1), _rel("E", "b1", "B", 1), _rel("E", "c1", "C", 1)]
     rr = GraphFactReranker(_Embed({"a1": 0.9, "a2": 0.8, "b1": 0.1, "c1": 0.5}))
     out = rr.select(_trav(rels), "q", 5)
@@ -70,7 +70,7 @@ def test_hop1_share_is_capped_and_lowest_groups_dropped_first():
 
 
 def test_hop2_is_pruned_by_score_and_never_orphaned():
-    # budget 4 -> hop-1 cap 2. Hop-1 X dibuang, jadi rantai X -> * ikut hilang walau skornya tinggi.
+    # budget 4 -> hop-1 cap 2. Hop-1 X is dropped, so the chain X -> * disappears too even though its score is high.
     rels = [
         _rel("E", "K", "uses_method", 1),
         _rel("E", "L", "uses_metric", 1),
@@ -137,7 +137,7 @@ def test_fact_embeddings_persist_to_disk_and_are_reused(tmp_path):
     GraphFactReranker(first, cache_path=path).select(trav, "q", 150)
     assert first.batches == [["E uses_metric M"]]
 
-    second = _Embed({"M": 0.5})  # "restart": instance baru, cache dimuat dari disk
+    second = _Embed({"M": 0.5})  # "restart": a new instance, the cache is loaded from disk
     out = GraphFactReranker(second, cache_path=path).select(trav, "q", 150)
     assert second.batches == [] and _pairs(out) == [("E", "M")]
 
@@ -151,7 +151,7 @@ def test_cache_from_another_model_or_corrupt_file_is_ignored(tmp_path, monkeypat
     monkeypatch.setattr(GR, "_CACHE_MODEL_ID", "other-model@rev/seq512")
     other = _Embed({})
     GraphFactReranker(other, cache_path=path).select(trav, "q", 150)
-    assert other.batches == [["E uses_metric M"]]  # dihitung ulang, bukan memakai vektor model lain
+    assert other.batches == [["E uses_metric M"]]  # recomputed, not using another model's vectors
 
     with open(path, "wb") as f:
         f.write(b"bukan npz")
@@ -194,7 +194,7 @@ def test_warm_embeds_only_missing_and_prunes_stale(tmp_path):
     assert stats == {"facts": 6, "computed": 2, "pruned": 2}
     assert sorted(emb2.batches[0]) == ["D related_to F", "F related_to D"]
 
-    emb3 = _Embed({})  # setelah warm, query tidak meng-embed fakta lagi
+    emb3 = _Embed({})  # after warm, queries no longer embed facts
     GraphFactReranker(emb3, cache_path=path).select(GraphTraversal(G).traverse("M", 2, None), "q", 150)
     assert emb3.batches == []
 

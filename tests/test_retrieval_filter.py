@@ -1,4 +1,4 @@
-"""Ambang relevansi jalur vektor (fallback chunk + thematic). Tanpa model/jaringan: hasil Chroma dipalsukan."""
+"""Relevance threshold of the vector paths (chunk fallback + thematic). No model/network: Chroma results are faked."""
 import types
 
 import pytest
@@ -46,8 +46,8 @@ def test_resolver_applies_configured_thresholds(monkeypatch):
         search_chunks=lambda emb, n_results: _results([0.4, 0.8], metas=[{"doc_id": "a.pdf"}, {"doc_id": "b.pdf"}]),
         search_communities=lambda emb, n_results: _results([0.4, 1.2]),
     )
-    r = object.__new__(QueryResolver)  # lewati __init__ (tanpa graph/model)
+    r = object.__new__(QueryResolver)  # skip __init__ (no graph/model)
     r.embed = types.SimpleNamespace(embed_text=lambda q: [0.0])
     r.chroma = chroma
-    assert [h["doc_id"] for h in r.search_chunks("q")] == ["a.pdf"]          # 0.8 lolos, 0.6 < 0.7
-    assert r.search_communities("q") == ["doc0", "doc1"]                     # 0.8 dan 0.4 >= 0.3
+    assert [h["doc_id"] for h in r.search_chunks("q")] == ["a.pdf"]          # 0.8 passes, 0.6 < 0.7
+    assert r.search_communities("q") == ["doc0", "doc1"]                     # 0.8 and 0.4 >= 0.3
