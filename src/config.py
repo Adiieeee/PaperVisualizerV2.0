@@ -33,6 +33,20 @@ EMBEDDING_BATCH_SIZE = 16
 # --- Security limits (see docs/SECURITY.md). All hard limits live in code, not in the prompt. ---
 ANSWER_MAX_OUTPUT_TOKENS = 2048          # cap on the cost/latency of the final answer
 LLM_MIN_INTERVAL = 6.0                   # seconds between the STARTS of two LLM calls (~10 req/min, all threads)
+
+# --- External background (src/query/external.py): Wikipedia (en), fallback arXiv ---
+# Only for definition questions (router flag `needs_background`) about a resolved entity of these types;
+# only the entity NAME is sent out, never the user's question. EXTERNAL_CONTEXT=off disables it.
+EXTERNAL_CONTEXT_ENABLED = os.getenv("EXTERNAL_CONTEXT", "on").strip().lower() not in ("0", "off", "false", "no")
+EXTERNAL_CACHE_PATH = "data/processed/external_cache.json"   # per corpus: backed up, kept by reset-index
+EXTERNAL_ENTITY_TYPES = ("Method", "Dataset", "Metric", "Task")  # never Paper/Author/Institution/Finding/Limitation
+EXTERNAL_MAX_ENTITIES = 2                # entities looked up per question
+EXTERNAL_MAX_CHARS = 800                 # cap on one extract in the prompt
+EXTERNAL_TIMEOUT = 3.0                   # seconds for all lookups of one question; late = answered without them
+EXTERNAL_TTL_DAYS = 90                   # a found entry is fetched again after this
+EXTERNAL_NOT_FOUND_TTL_DAYS = 7          # "nothing matching" is retried after this
+EXTERNAL_USER_AGENT = ("PaperVisualizer-GraphRAG/2.0 (local research tool; "
+                       "+https://github.com/Adiieeee/PaperVisualizerV2.0)")  # Wikimedia policy: identify the client
 MAX_CHAT_QUERY_LENGTH = 500              # maximum question length in /api/chat
 MAX_CHAT_BODY_BYTES = 10_000             # maximum body size in /api/chat (also for chunked bodies)
 CHAT_RATE_LIMIT_MAX = 8                  # per IP per window; one chat takes >= 6 s (2 calls, starts 6 s apart)
@@ -57,6 +71,11 @@ RESOLVER_SIM_THRESHOLD = 0.62
 # them alone, and a broad question about the topic is answered from community summaries. Fixed before
 # measuring (2026-10-26); do not tune against the eval. Below MIN_PAPERS no term is derived.
 TOPIC_TERM_MIN_SHARE = 0.5
+# External background (src/query/external.py): a Wikipedia/arXiv candidate whose title names the entity is
+# used only when its text has cosine >= this with the graph's "name: description". bge-m3 (2026-10-29, 18
+# entities): correct pages 0.544-0.772 (lowest: Gemini (language model) 0.560, Accuracy and precision 0.544);
+# the title gate removes most wrong ones, which reached 0.652 (Llama.cpp) on cosine alone.
+EXTERNAL_MIN_SIMILARITY = 0.50
 TOPIC_TERM_MIN_PAPERS = 3
 # Vector paths (chunk fallback + thematic): results below the threshold are dropped; if all of them fall away, the engine
 # refuses without an LLM call. bge-m3 (calibrated 2026-10-23, top-1 cosine): relevant fallbacks >= 0.563,
