@@ -23,6 +23,7 @@ PROTECTED_TAGS = [
     "konteks_graf",
     "konteks_teks",
     "ringkasan_komunitas",
+    "konteks_eksternal",
     "pertanyaan_user",
     "teks_paper",
     "daftar_entitas",

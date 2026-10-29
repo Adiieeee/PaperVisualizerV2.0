@@ -208,3 +208,95 @@ def test_non_topic_question_without_node_goes_straight_to_chunks():
 def test_topic_question_with_nothing_relevant_refuses_without_llm():
     e = _engine(QueryRouting(intent="entity", search_query="sycophancy"), resolver=_no_node_resolver(True, [], []))
     assert e.query("sycophancy?") == NO_CONTEXT_MESSAGE and e.llm.calls == []
+
+
+# --- External background (Wikipedia/arXiv) -------------------------------------------------------
+
+from src.llm.prompts import KIND_EXTERNAL
+
+
+class _External:
+    """Fake ExternalContext: `found` is what choose() returns; records which names were looked up."""
+    def __init__(self, found=None, cached=None, candidates=()):
+        self.found, self._cached, self.candidates, self.fetched = found, cached, candidates, []
+
+    def cached(self, name):
+        return (True, self._cached) if self._cached is not None else (False, None)
+
+    def fetch(self, name, timeout=None):
+        self.fetched.append(name)
+        return list(self.candidates)
+
+    def choose(self, name, node_text, candidates):
+        return self.found
+
+
+_MMLU = {"source": "wikipedia", "title": "MMLU", "extract": "A benchmark.", "url": "https://en.wikipedia.org/wiki/MMLU"}
+
+
+def _entity_engine(node_type, routing, external):
+    import networkx as nx
+    g = nx.Graph()
+    g.add_node("MMLU", type=node_type, description="A question-answering dataset.")
+    rs = types.SimpleNamespace(resolve_entities=lambda q, context_query=None: ["MMLU"])
+    tr = types.SimpleNamespace(traverse=lambda n, max_hops, max_rels: {"entity": n},
+                               format_traversal_context=lambda r: f"ENTITAS: {r['entity']}")
+    e = _engine(routing, resolver=rs, traversal=tr)
+    e.graph, e.external = g, external
+    return e
+
+
+def test_definition_question_adds_external_block_after_graph_block():
+    ext = _External(found=_MMLU, candidates=[{"title": "MMLU"}])
+    e = _entity_engine("Dataset", QueryRouting(intent="entity", search_query="MMLU", needs_background=True), ext)
+    e.query("Apa itu MMLU?")
+    (_q, blocks), = e.llm.calls
+    assert [k for k, _t in blocks] == [KIND_GRAPH, KIND_EXTERNAL]
+    assert "[Wikipedia: MMLU] A benchmark. (https://en.wikipedia.org/wiki/MMLU)" in blocks[1][1]
+    assert ext.fetched == ["MMLU"]
+    assert e.last_trace["external"] == ["wikipedia: MMLU"]
+
+
+def test_cached_entry_is_used_without_fetching():
+    ext = _External(cached=_MMLU)
+    e = _entity_engine("Dataset", QueryRouting(intent="entity", search_query="MMLU", needs_background=True), ext)
+    e.query("Apa itu MMLU?")
+    assert ext.fetched == [] and len(e.llm.calls[0][1]) == 2
+
+
+@pytest.mark.parametrize("node_type, flag, external", [
+    ("Dataset", False, _External(found=_MMLU)),   # not a definition question
+    ("Author", True, _External(found=_MMLU)),     # never looked up: people
+    ("Paper", True, _External(found=_MMLU)),
+    ("Dataset", True, None),                      # feature off
+    ("Dataset", True, _External(found=None)),     # nothing matching found
+])
+def test_no_external_block(node_type, flag, external):
+    e = _entity_engine(node_type, QueryRouting(intent="entity", search_query="MMLU", needs_background=flag), external)
+    e.query("MMLU?")
+    kind, text = _only_block(e)
+    assert kind == KIND_GRAPH and "ENTITAS: MMLU" in text
+    if isinstance(external, _External) and node_type != "Dataset":
+        assert external.fetched == []
+    assert e.last_trace["external"] == []
+
+
+def test_failed_lookup_still_answers_from_the_graph():
+    ext = _External(found=_MMLU)
+    ext.fetch = lambda name, timeout=None: None  # network error / timeout inside fetch
+    e = _entity_engine("Dataset", QueryRouting(intent="entity", search_query="MMLU", needs_background=True), ext)
+    assert e.query("Apa itu MMLU?") == "jawaban"
+    assert _only_block(e)[0] == KIND_GRAPH
+
+
+def test_slow_lookup_is_skipped_after_the_timeout(monkeypatch):
+    import threading
+    from src import config
+    monkeypatch.setattr(config, "EXTERNAL_TIMEOUT", 0.05)
+    release = threading.Event()
+    ext = _External(found=_MMLU)
+    ext.fetch = lambda name, timeout=None: release.wait(5) and []
+    e = _entity_engine("Dataset", QueryRouting(intent="entity", search_query="MMLU", needs_background=True), ext)
+    e.query("Apa itu MMLU?")
+    release.set()
+    assert _only_block(e)[0] == KIND_GRAPH

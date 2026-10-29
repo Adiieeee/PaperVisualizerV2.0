@@ -1,13 +1,17 @@
+import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
+
 import networkx as nx
 
 from src.llm.llm_service import LLMService
 from src.llm.embedding import EmbeddingClient
-from src.llm.prompts import KIND_GRAPH, KIND_TEXT, KIND_COMMUNITY
+from src.llm.prompts import KIND_GRAPH, KIND_TEXT, KIND_COMMUNITY, KIND_EXTERNAL
 from src.vectorstore.chromadb_store import ChromaStore
 from src.query.router import QueryRouter
 from src.query.resolver import QueryResolver
 from src.query.traversal import GraphTraversal
 from src.query.graph_rerank import GraphFactReranker
+from src.query.external import ExternalContext, format_external
 from src.graph.analytics import GraphAnalytics
 from src.security.integrity import check_artifacts
 from src import config
@@ -25,6 +29,10 @@ OFF_TOPIC_MESSAGE = (
     "hal itu di dokumen. / Sorry, I can only answer questions about the papers in this corpus; the "
     "documents contain no information about this."
 )
+
+
+# Network lookups of external background run here, beside the graph traversal (2 = CHAT_MAX_CONCURRENT).
+_EXTERNAL_POOL = ThreadPoolExecutor(max_workers=2, thread_name_prefix="external")
 
 
 def format_chunk(i: int, hit: dict, paper_titles: dict) -> str:
@@ -56,6 +64,40 @@ class GraphRAGEngine:
         self.reranker = GraphFactReranker(self.embed, cache_path=FACT_EMBEDDINGS_PATH)
         self.analytics = GraphAnalytics(self.graph)
         self.paper_titles = {doc: m.get("title") for doc, m in load_paper_metadata().items()}
+        self.external = ExternalContext(self.embed) if config.EXTERNAL_CONTEXT_ENABLED else None
+        self.last_trace = None
+
+    def _start_external(self, routing, nodes) -> list:
+        """Start background lookups for a definition question (router flag) about entities of the eligible
+        types: [(name, node_text, cached entry | Future of candidates)]. Only the entity name goes out."""
+        if not (routing.needs_background and getattr(self, "external", None)):
+            return []
+        jobs = []
+        for n in nodes:
+            data = self.graph.nodes[n]
+            if data.get("type") not in config.EXTERNAL_ENTITY_TYPES:
+                continue
+            node_text = f"{n}: {data.get('description') or ''}"
+            hit, entry = self.external.cached(n)
+            jobs.append((n, node_text, entry if hit else _EXTERNAL_POOL.submit(self.external.fetch, n)))
+            if len(jobs) == config.EXTERNAL_MAX_ENTITIES:
+                break
+        return jobs
+
+    def _finish_external(self, jobs, started: float) -> list:
+        """Entries found for the started lookups; one still running past EXTERNAL_TIMEOUT is skipped."""
+        found = []
+        for name, node_text, job in jobs:
+            if hasattr(job, "result"):
+                try:
+                    candidates = job.result(timeout=max(0.0, config.EXTERNAL_TIMEOUT - (time.monotonic() - started)))
+                except FutureTimeout:
+                    print(f"[External] '{name}': no answer in time, answering without it")
+                    continue
+                job = None if candidates is None else self.external.choose(name, node_text, candidates)
+            if job:
+                found.append(job)
+        return found
 
     def query(self, user_query: str) -> str:
         """
@@ -63,6 +105,7 @@ class GraphRAGEngine:
         """
         print(f"\n[1] Routing query: '{user_query}'")
         routing = self.router.route(user_query)
+        self.last_trace = {"intent": routing.intent, "needs_background": routing.needs_background, "external": []}
         if routing.intent == "off_topic":
             print("[2] Off-topic question: refused without retrieval")
             return OFF_TOPIC_MESSAGE
@@ -72,6 +115,7 @@ class GraphRAGEngine:
         # (src/llm/prompts.py). Each part is added to `context_parts` and its kind to `kind`.
         context_parts = []
         kind = KIND_GRAPH
+        external = []  # background entries (Wikipedia/arXiv), sent as their own block
 
         if routing.intent == "counting":
             print(f"[2] Executing Graph Stats for '{routing.target_type}'")
@@ -120,6 +164,10 @@ class GraphRAGEngine:
                 # Per-entity context budget (see config). Read at query time, not imported, so
                 # `evaluate.py --budget` can override it for experiments.
                 budget = config.ENTITY_BUDGET_SINGLE if len(nodes) == 1 else config.ENTITY_BUDGET_MULTI
+                # Network lookups start first so they overlap the traversal (and the rate-limit pause before
+                # the answer call); scoring them needs the embedding model, so it waits until after the rerank.
+                started = time.monotonic()
+                jobs = self._start_external(routing, nodes)
                 print(f"[3] Traversing graph from {nodes} (multi-hop, budget {budget}/entitas)")
                 context_parts.append("Graph Context:")
                 for n in nodes:
@@ -128,6 +176,9 @@ class GraphRAGEngine:
                     trav_result = self.traversal.traverse(n, max_hops=2, max_rels=None)
                     trav_result = self.reranker.select(trav_result, user_query, budget)
                     context_parts.append(self.traversal.format_traversal_context(trav_result))
+                external = self._finish_external(jobs, started)
+                if external:
+                    print(f"[3b] External background: {[e['title'] for e in external]}")
             else:
                 # A question naming only the corpus topic ("ways to reduce sycophancy?") is a broad one,
                 # whatever the router said: answer it from the community summaries, searched with the
@@ -159,6 +210,11 @@ class GraphRAGEngine:
         # Generate Answer. generate_final_answer is the ONLY place context + question become a
         # prompt (neutralized + tagged as DATA) — do not interpolate context into prompts elsewhere.
         print("[5] Generating Final Answer...")
-        final_answer = self.llm.generate_final_answer(user_query, [(kind, assembled_context)])
+        blocks = [(kind, assembled_context)]
+        if external:
+            self.last_trace["external"] = [f"{e['source']}: {e['title']}" for e in external]
+            blocks.append((KIND_EXTERNAL, "External Background (not from the papers):\n"
+                           + "\n".join(format_external(e) for e in external)))
+        final_answer = self.llm.generate_final_answer(user_query, blocks)
 
         return final_answer

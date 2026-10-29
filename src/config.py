@@ -247,3 +247,5 @@ class QueryRouting(BaseModel):
     intent: INTENT_TYPES = Field(description="The classification of the user's query.")
     target_type: Optional[ENTITY_TYPES] = Field(None, description="Required for 'counting' intent. The type of entity being counted or ranked (e.g., 'Method').")
     search_query: Optional[str] = Field(None, description="The refined text query for 'entity' or 'thematic' search. Leave empty for counting if not applicable.")
+    # Not an intent (INTENT_TYPES is in the manifest's schema fingerprint): a flag on 'entity' questions.
+    needs_background: bool = Field(False, description="True only for 'entity' questions asking what the entity IS or how it works in general (a definition), not about its role in the papers.")

@@ -148,9 +148,25 @@ def save_cache(path: str, entries: dict) -> None:
     atomic_write_json(path, {"version": CACHE_VERSION, "entries": entries}, ensure_ascii=False, indent=1)
 
 
+def _search_name(name: str) -> str:
+    """"Direct Preference Optimization (DPO)" -> searched and matched without the bracketed acronym."""
+    return re.sub(r"\s*\([^)]*\)", "", name).strip() or name
+
+
+def _gated(name: str, candidates: List[dict]) -> List[dict]:
+    """Candidates whose title names the entity, best tier first. arXiv: only the paper NAMED after the entity
+    ("TruthfulQA: ..."); papers that merely mention it were measured to be about another sense
+    ("negative prompting" -> diffusion models) or a niche variant."""
+    tiered = [(title_tier(name, c), c) for c in candidates]
+    kept = [{**c, "tier": t} for t, c in tiered if t >= (2 if c["source"] == "arxiv" else 1)]
+    return sorted(kept, key=lambda c: -c["tier"])
+
+
 class ExternalContext:
-    """Looks up, scores and caches the background text of an entity. Thread-safe (lookups run beside the
-    graph traversal, two chats can run at once)."""
+    """Looks up, scores and caches the background text of an entity. Two phases so the network part can run
+    beside the graph traversal: `fetch` (HTTP + title gate, no embedding: the HF tokenizer must not be used
+    from two threads at once) and `choose` (embedding score + cache, on the caller's thread). `lookup` does
+    both. Thread-safe for two concurrent chats."""
 
     def __init__(self, embed, cache_path: str = None, get: Callable = http_get, clock: Callable = time.time):
         self.embed = embed
@@ -169,48 +185,46 @@ class ExternalContext:
         days = config.EXTERNAL_TTL_DAYS if entry.get("status") == "ok" else config.EXTERNAL_NOT_FOUND_TTL_DAYS
         return self.clock() - float(entry.get("fetched_at", 0)) < days * 86400
 
-    def _best(self, name: str, node_text: str, candidates: List[dict]) -> Optional[dict]:
-        """The candidate with the best title match, then the highest cosine to the graph's text."""
-        tiered = [(title_tier(name, c), c) for c in candidates]
-        # arXiv: only the paper NAMED after the entity ("TruthfulQA: ..."). Papers that merely mention it
-        # were measured to be about another sense ("negative prompting" -> diffusion models) or a niche variant.
-        tiered = [(t, c) for t, c in tiered if t >= (2 if c["source"] == "arxiv" else 1)]
-        if not tiered:
-            return None
-        vecs = self.embed.embed_batch([node_text] + [candidate_text(c) for _t, c in tiered])
-        q = vecs[0]
-        scored = [(t, sum(a * b for a, b in zip(q, v)), c) for v, (t, c) in zip(vecs[1:], tiered)]
-        _tier, score, best = max(scored, key=lambda x: (x[0], x[1]))
-        if score < config.EXTERNAL_MIN_SIMILARITY:
-            print(f"[External] best candidate '{best['title']}' too far ({score:.3f})")
-            return None
-        return {**best, "score": round(score, 4)}
-
-    def lookup(self, name: str, node_text: str, timeout: float = None) -> Optional[dict]:
-        """Background entry for `name` ({source, title, url, extract, ...}) or None. `node_text` is what
-        the graph says about the entity ("MMLU: A question-answering dataset."), used to pick the right page."""
+    def cached(self, name: str):
+        """(True, entry-or-None) for a fresh cache entry ("not found" -> None), else (False, None)."""
         with self._lock:
             entry = self._entries().get(name)
         if entry and self._fresh(entry):
-            return entry if entry.get("status") == "ok" else None
+            return True, (entry if entry.get("status") == "ok" else None)
+        return False, None
 
+    def fetch(self, name: str, timeout: float = None) -> Optional[List[dict]]:
+        """Title-gated candidates (maybe []), or None when the lookup failed or ran out of time (transient:
+        nothing is cached). arXiv is asked only when no Wikipedia page names the entity."""
         deadline = time.monotonic() + (timeout or config.EXTERNAL_TIMEOUT)
-        # "Direct Preference Optimization (DPO)": search and match without the bracketed acronym.
-        query = re.sub(r"\s*\([^)]*\)", "", name).strip() or name
-        found = None
+        query = _search_name(name)
         try:
-            for fetch in (wikipedia_candidates, arxiv_candidates):
+            for source in (wikipedia_candidates, arxiv_candidates):
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
-                    return None  # out of time: not cached, the next question tries again
-                found = self._best(query, node_text, fetch(query, remaining, self.get))
-                if found:
-                    break
-        except Exception as e:  # network, HTTP 429/5xx, bad JSON/XML: transient, so not cached
+                    return None
+                gated = _gated(query, source(query, remaining, self.get))
+                if gated:
+                    return gated
+        except Exception as e:  # network, HTTP 429/5xx, bad JSON/XML
             print(f"[External] lookup for '{name}' failed: {type(e).__name__}: {str(e)[:120]}")
             return None
+        return []
 
-        new = ({**found, "status": "ok"} if found else {"status": "not_found"})
+    def choose(self, name: str, node_text: str, candidates: List[dict]) -> Optional[dict]:
+        """Best tier, then highest cosine to the graph's text; below EXTERNAL_MIN_SIMILARITY = not found.
+        The outcome (found or not) is cached."""
+        found = None
+        if candidates:
+            vecs = self.embed.embed_batch([node_text] + [candidate_text(c) for c in candidates])
+            q = vecs[0]
+            scored = [(c["tier"], sum(a * b for a, b in zip(q, v)), c) for v, c in zip(vecs[1:], candidates)]
+            _tier, score, best = max(scored, key=lambda x: (x[0], x[1]))
+            if score >= config.EXTERNAL_MIN_SIMILARITY:
+                found = {**best, "score": round(score, 4)}
+            else:
+                print(f"[External] best candidate '{best['title']}' too far ({score:.3f})")
+        new = {**found, "status": "ok"} if found else {"status": "not_found"}
         new["fetched_at"] = self.clock()
         with self._lock:
             self._entries()[name] = new
@@ -219,3 +233,12 @@ class ExternalContext:
             except OSError as e:
                 print(f"[External] cache not saved: {e}")
         return new if found else None
+
+    def lookup(self, name: str, node_text: str, timeout: float = None) -> Optional[dict]:
+        """Background entry for `name` ({source, title, url, extract, ...}) or None. `node_text` is what
+        the graph says about the entity ("MMLU: A question-answering dataset."), used to pick the right page."""
+        hit, entry = self.cached(name)
+        if hit:
+            return entry
+        candidates = self.fetch(name, timeout)
+        return None if candidates is None else self.choose(name, node_text, candidates)
