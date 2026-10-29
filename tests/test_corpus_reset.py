@@ -13,7 +13,8 @@ def tree(tmp_path, monkeypatch):
     (raw / "a.pdf").write_bytes(b"%PDF")
     for name in ("paper_metadata.json", "graph.graphml", "manifest.json", "graph_visualization.html",
                  "similarity_debug.csv", "checkpoint_extraction.json", "checkpoint_dedup.json",
-                 "extraction_models.json", "extraction_cache.json", "fact_embeddings.npz", ".gitkeep"):
+                 "extraction_models.json", "extraction_cache.json", "fact_embeddings.npz", "external_cache.json",
+                 ".gitkeep"):
         (processed / name).write_text("x", encoding="utf-8")
     (processed / "chroma_db").mkdir()
     (processed / "chroma_db" / "chroma.sqlite3").write_text("x", encoding="utf-8")
@@ -27,7 +28,7 @@ def test_reset_index_keeps_pdfs_paper_metadata_and_extraction_archive(tree):
     corpus.cmd_reset_index(types.SimpleNamespace(yes=True))
     assert (raw / "a.pdf").exists()
     assert sorted(p.name for p in processed.iterdir()) == [
-        ".gitkeep", "extraction_cache.json", "paper_metadata.json"]
+        ".gitkeep", "external_cache.json", "extraction_cache.json", "paper_metadata.json"]
 
 
 def test_reset_index_asks_and_can_be_cancelled(tree, monkeypatch):
@@ -42,6 +43,7 @@ def test_clear_deletes_the_extraction_archive(tree):
     corpus.cmd_clear(types.SimpleNamespace(yes=True))
     assert not (processed / "extraction_cache.json").exists()
     assert not (processed / "fact_embeddings.npz").exists()
+    assert not (processed / "external_cache.json").exists()
 
 
 def test_backup_includes_the_extraction_archive(tree, tmp_path, monkeypatch):
@@ -64,3 +66,29 @@ def test_fact_embedding_cache_survives_backup_and_restore(tree, tmp_path, monkey
     assert not (processed / "fact_embeddings.npz").exists()
     corpus.cmd_restore(types.SimpleNamespace(name="uji", yes=True))
     assert (processed / "fact_embeddings.npz").read_text(encoding="utf-8") == "cache"
+
+
+def test_external_cache_survives_backup_and_restore(tree, tmp_path, monkeypatch):
+    _, processed = tree
+    monkeypatch.setattr(corpus, "BACKUPS", tmp_path / "backups")
+    monkeypatch.setattr(corpus, "EVAL_CASES", tmp_path / "no_eval_cases.json")
+    monkeypatch.setattr(corpus, "_verify_after_restore", lambda: None)
+    (processed / "external_cache.json").write_text("web", encoding="utf-8")
+    corpus.cmd_backup(types.SimpleNamespace(name="uji"))
+    corpus.cmd_clear(types.SimpleNamespace(yes=True))
+    corpus.cmd_restore(types.SimpleNamespace(name="uji", yes=True))
+    assert (processed / "external_cache.json").read_text(encoding="utf-8") == "web"
+
+
+def test_external_forget_drops_one_entry_or_all(tmp_path, monkeypatch):
+    from src import config
+    from src.query.external import load_cache, save_cache
+    path = str(tmp_path / "external_cache.json")
+    monkeypatch.setattr(config, "EXTERNAL_CACHE_PATH", path)
+    save_cache(path, {"MMLU": {"status": "ok"}, "Gemini": {"status": "ok"}})
+    corpus.cmd_external_forget(types.SimpleNamespace(name="Gemini", all=False))
+    assert list(load_cache(path)) == ["MMLU"]
+    corpus.cmd_external_forget(types.SimpleNamespace(name="nope", all=False))   # unknown: nothing changes
+    assert list(load_cache(path)) == ["MMLU"]
+    corpus.cmd_external_forget(types.SimpleNamespace(name=None, all=True))
+    assert load_cache(path) == {}

@@ -8,6 +8,7 @@ Commands:
     python corpus.py restore <theme-name>  # restore a corpus from a backup (no rebuild)
     python corpus.py manifest              # write the integrity manifest for the active corpus (no rebuild)
     python corpus.py audit                 # scan graph + chunks for suspicious text (read-only)
+    python corpus.py external-forget <entity>|--all   # drop cached Wikipedia/arXiv background
 
 Example flow for switching the paper theme:
     python corpus.py backup cnn-klasik     # save the current one
@@ -40,8 +41,9 @@ def _valid_name(name: str) -> bool:
     return bool(_NAME_RE.match(name)) and ".." not in name
 # extraction_cache.json: per-chunk LLM results; with this archive a restored corpus can be built without
 # re-extracting. fact_embeddings.npz: fact embedding cache for graph rerank; without it a restored corpus
-# is still correct, only the first query per node is slow.
-OPTIONAL = ["graph_visualization.html", "extraction_cache.json", "fact_embeddings.npz"]
+# is still correct, only the first query per node is slow. external_cache.json: Wikipedia/arXiv background
+# per entity; which page an entity maps to depends on the corpus, so it travels with it.
+OPTIONAL = ["graph_visualization.html", "extraction_cache.json", "fact_embeddings.npz", "external_cache.json"]
 # Deliberately NOT backed up: similarity_debug*.csv (diagnostic log, large, not used at runtime)
 
 
@@ -157,7 +159,7 @@ def _wipe_current(verbose=True):
         f.unlink(); removed.append(str(f))
     for pattern in ("graph.graphml", "paper_metadata.json", "graph_visualization.html",
                     "similarity_debug*.csv", "checkpoint_*.json", "extraction_cache.json",
-                    "extraction_models.json", "fact_embeddings.npz"):
+                    "extraction_models.json", "fact_embeddings.npz", "external_cache.json"):
         for f in PROCESSED.glob(pattern):
             f.unlink(); removed.append(str(f))
     chroma = PROCESSED / "chroma_db"
@@ -192,7 +194,8 @@ def cmd_clear(args):
 
 
 # Derived artifacts that depend on the embedding model / build result. PDFs, paper_metadata.json and
-# extraction_cache.json (LLM output, independent of the embedding) are deliberately NOT included.
+# extraction_cache.json (LLM output, independent of the embedding) are deliberately NOT included, nor is
+# external_cache.json (fetched from the web, independent of the build).
 # extraction_models.json = an old file (from before the extraction archive), cleaned up if still present.
 INDEX_ARTIFACTS = ("graph.graphml", "manifest.json", "graph_visualization.html",
                    "similarity_debug*.csv", "checkpoint_*.json", "extraction_models.json",
@@ -219,7 +222,7 @@ def cmd_reset_index(args):
     print("Akan MENGHAPUS indeks hasil build (untuk build ulang, mis. setelah ganti model embedding):")
     print("  - chroma_db/, graph.graphml, manifest.json, visualisasi, log & checkpoint")
     print(f"  Dipertahankan: {len(list(RAW.glob('*.pdf')))} PDF di data/raw/, paper_metadata.json, "
-          f"extraction_cache.json")
+          f"extraction_cache.json, external_cache.json")
     if not args.yes:
         if (PROCESSED / "graph.graphml").exists():
             print("\n[!] Belum di-backup? Batalkan lalu jalankan: python corpus.py backup <nama-tema>")
@@ -349,6 +352,13 @@ def cmd_audit(_args):
         for cid, text in zip(summaries.get("ids", []), summaries.get("documents", [])):
             add(f"ringkasan komunitas {cid}", text, audit_text(text, names=False))
 
+    from src.config import EXTERNAL_CACHE_PATH
+    from src.query.external import load_cache
+    for name, entry in load_cache(EXTERNAL_CACHE_PATH).items():
+        if entry.get("status") == "ok":
+            add(f"konteks eksternal '{str(name)[:30]}'", entry.get("extract", ""),
+                audit_text(entry.get("extract", ""), names=False))
+
     print(f"Diperiksa: {n_nodes} node, {n_edges} edge, {n_chunks} chunk.")
     if not findings:
         print("[OK] Tidak ada temuan mencurigakan.")
@@ -358,6 +368,25 @@ def cmd_audit(_args):
         print(f"  - {where}: {why}\n      \"{snippet}\"")
     if len(findings) > 100:
         print(f"  ... dan {len(findings) - 100} lainnya.")
+
+
+def cmd_external_forget(args):
+    """Drop cached external background (e.g. an entity that was mapped to the wrong page)."""
+    from src.config import EXTERNAL_CACHE_PATH
+    from src.query.external import load_cache, save_cache
+    entries = load_cache(EXTERNAL_CACHE_PATH)
+    if args.all:
+        names = list(entries)
+    elif args.name in entries:
+        names = [args.name]
+    else:
+        close = [n for n in entries if n.lower() == (args.name or "").lower()]
+        print(f"[!] '{args.name}' tidak ada di {EXTERNAL_CACHE_PATH}." + (f" Maksudnya: {close[0]!r}?" if close else ""))
+        return
+    for n in names:
+        entries.pop(n)
+    save_cache(EXTERNAL_CACHE_PATH, entries)
+    print(f"[OK] {len(names)} entri dihapus; akan diambil ulang saat ditanyakan lagi.")
 
 
 def main():
@@ -383,12 +412,19 @@ def main():
     sub.add_parser("manifest", help="write the integrity manifest for the active corpus (no rebuild)")
     sub.add_parser("audit", help="scan graph + chunks for suspicious text (read-only)")
 
+    p_e = sub.add_parser("external-forget", help="drop cached Wikipedia/arXiv background for an entity")
+    p_e.add_argument("name", nargs="?", help="entity name as in the graph")
+    p_e.add_argument("--all", action="store_true", help="drop every entry")
+
     args = ap.parse_args()
     if not args.cmd:
         ap.print_help()
         sys.exit(1)
+    if args.cmd == "external-forget" and not (args.name or args.all):
+        ap.error("external-forget needs an entity name or --all")
     {"list": cmd_list, "backup": cmd_backup, "clear": cmd_clear, "restore": cmd_restore,
-     "reset-index": cmd_reset_index, "manifest": cmd_manifest, "audit": cmd_audit}[args.cmd](args)
+     "reset-index": cmd_reset_index, "manifest": cmd_manifest, "audit": cmd_audit,
+     "external-forget": cmd_external_forget}[args.cmd](args)
 
 
 if __name__ == "__main__":
