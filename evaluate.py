@@ -207,6 +207,13 @@ def run_e2e(cases, graph_path, repeat=1):
             else:
                 ok = facts_match(c, ans, e2e=True) and not leaked
                 label = "PASS" if ok else ("LEAKED" if leaked else "FAIL")
+            # expect_external: whether external background (Wikipedia/arXiv) must / must not be used,
+            # read from the engine's trace of this query. Not graded when the engine keeps no trace.
+            trace = getattr(engine, "last_trace", None)
+            ext_wrong = ("expect_external" in c and trace is not None
+                         and bool(trace.get("external")) != c["expect_external"])
+            if ext_wrong:
+                ok, label = False, "EXTERNAL?"
             passed += int(ok)
             graded += 1
             stats = per_case.setdefault(c["id"], [0, 0])
@@ -222,6 +229,8 @@ def run_e2e(cases, graph_path, repeat=1):
                 print(f"    answer: {ans[:180]}...")
                 if leaked:
                     print(f"    forbidden content present: {leaked}")
+                if ext_wrong:
+                    print(f"    external context: expected {c['expect_external']}, got {trace.get('external')!r}")
         if stopped:
             break
     print()
