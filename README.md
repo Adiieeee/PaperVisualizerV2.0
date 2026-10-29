@@ -126,6 +126,7 @@ Question
 Retrieval (local, no LLM)
   ├─ entity     → resolve node(s) → 2-hop traversal → rerank facts by similarity to the question
   │                (nodes named only by the corpus topic, e.g. "Sycophancy", are never picked)
+  │                + for "what is X?" questions: background on X from Wikipedia / arXiv (in parallel)
   ├─ thematic   → community summaries above a relevance threshold
   ├─ counting   → rank entities by number of papers, then connections
   ├─ structural → bridge entities linked to ≥ 2 papers
@@ -139,6 +140,15 @@ Answer (1 LLM call): context is wrapped as untrusted DATA; the model answers onl
 The corpus topic (here "sycophancy") is derived automatically from the paper titles. It appears in almost every
 question, so it is never used on its own to pick a graph node; a question about the topic in general ("how can
 sycophancy be reduced?") is answered from the community summaries instead.
+
+**External background.** Papers often name a well-known method or dataset without explaining it. When the router
+flags a definition question ("Apa itu MMLU?") about a resolved method, dataset, metric or task, the app looks up a
+short summary on the English Wikipedia, or the arXiv paper named after it, and adds it to the context as a separate
+block. The answer gives what the papers say first and then the background, naming its source. Only the entity name
+is sent out, never the question. A page is used only if its title names the entity and its text is close to what
+the graph says about it, so "Gemini" does not turn into the constellation. Lookups run while the graph is being
+traversed (3 s cap) and are cached per corpus, so they usually add no waiting time. Set `EXTERNAL_CONTEXT=off` to
+disable them.
 
 A normal question costs **2 LLM calls**. Off-topic questions and questions with no relevant passage cost **1** (the
 router) and return a fixed message.
@@ -208,6 +218,7 @@ cp .env.example .env      # Windows: copy .env.example .env
 | `GROQ_API_KEY` | no | empty | Enables the Groq fallback together with `GROQ_MODEL` |
 | `GROQ_MODEL` | no | empty | e.g. `groq/openai/gpt-oss-120b`; leave either Groq variable empty to disable the fallback |
 | `EMBEDDING_DEVICE` | no | `auto` | `auto` (GPU if available), `cpu` or `cuda` |
+| `EXTERNAL_CONTEXT` | no | `on` | `off` disables the Wikipedia/arXiv background for definition questions |
 
 **About the fallback.** Groq is used only when Gemini reports that its **daily** quota is exhausted, and only for
 extraction, summaries, routing and answers. Deduplication never falls back, so merge decisions always come from one
@@ -292,6 +303,7 @@ python corpus.py restore sycophancy   # bring a saved corpus back
 python corpus.py reset-index          # delete build outputs but keep PDFs, metadata and the extraction archive
 python corpus.py manifest             # (re)write the integrity manifest for the active corpus
 python corpus.py audit                # read-only scan for injection-like text in the graph and chunks
+python corpus.py external-forget X    # drop the cached Wikipedia/arXiv background of entity X (or --all)
 ```
 
 Typical flow for a new topic: `backup` the current corpus, `clear`, put new PDFs in `data/raw/`, `python main.py build`.
@@ -384,6 +396,7 @@ Build outputs in `data/processed/`:
 | `paper_metadata.json` | Title and popular model names per PDF |
 | `extraction_cache.json` | Archived LLM extraction per chunk (reused across rebuilds) |
 | `fact_embeddings.npz` | Cached embeddings of graph facts for reranking (safe to delete) |
+| `external_cache.json` | Cached Wikipedia/arXiv background per entity (kept by `reset-index`, safe to delete) |
 | `manifest.json` | Integrity manifest checked at startup |
 | `graph_visualization.html` | Standalone visualizer snapshot |
 | `similarity_debug.csv` | Every deduplication comparison, for diagnostics |
@@ -404,6 +417,8 @@ This is a **personal tool meant to run on your own machine**, not a public servi
 - **Your data leaves your machine**: PDF text, summaries and questions are sent to Google Gemini (and to Groq if the
   fallback is enabled and triggered). Check the providers' free-tier data terms before indexing sensitive or
   copyrighted documents. Embeddings are computed locally.
+- For definition questions, the **name of the entity** (not your question) is sent to Wikipedia or arXiv. Their
+  text is treated as untrusted like PDF text. `EXTERNAL_CONTEXT=off` turns this off.
 - Never commit `.env`. If a key ever lands in git history, rotate it.
 - Building stays CLI-only; there is no HTTP endpoint that can trigger a build.
 
@@ -418,6 +433,8 @@ This is a **personal tool meant to run on your own machine**, not a public servi
 - **Paraphrases in other languages** sometimes fail to resolve to the right entity; naming the entity explicitly helps.
 - **Free-tier limits.** Daily quotas cap how many papers you can build and how many questions you can ask per day.
 - **Single user.** Rate limiting is in-memory and per process; the app is not designed for concurrent public use.
+- **External background coverage.** Recent or niche research terms often have no Wikipedia page and no arXiv paper
+  named after them; those questions are answered from the papers alone.
 - **LLM variability.** Extraction and answers can differ slightly between runs, even at temperature 0.
 
 ---
