@@ -32,9 +32,10 @@ EMBEDDING_BATCH_SIZE = 16
 
 # --- Security limits (see docs/SECURITY.md). All hard limits live in code, not in the prompt. ---
 ANSWER_MAX_OUTPUT_TOKENS = 2048          # cap on the cost/latency of the final answer
+LLM_MIN_INTERVAL = 6.0                   # seconds between the STARTS of two LLM calls (~10 req/min, all threads)
 MAX_CHAT_QUERY_LENGTH = 500              # maximum question length in /api/chat
 MAX_CHAT_BODY_BYTES = 10_000             # maximum body size in /api/chat (also for chunked bodies)
-CHAT_RATE_LIMIT_MAX = 8                  # per IP per window; one chat takes >= 12 s (2 calls + sleep 6)
+CHAT_RATE_LIMIT_MAX = 8                  # per IP per window; one chat takes >= 6 s (2 calls, starts 6 s apart)
 CHAT_RATE_LIMIT_WINDOW_SECONDS = 60
 CHAT_MAX_CONCURRENT = 2                  # chats allowed to run concurrently (each chat = 2 LLM calls)
 ALLOWED_HOSTS = ("127.0.0.1", "localhost")  # fixed Host allow-list (anti DNS rebinding)

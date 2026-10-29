@@ -1,5 +1,6 @@
 from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception
 import json
+import threading
 import time
 
 # DailyQuotaExceededError is now defined in llm_client (one class for every path);
@@ -28,6 +29,7 @@ def print_retry(retry_state):
 from src.config import (
     GEMINI_API_KEY, Entity, ExtractedKnowledge, LLMExtractedKnowledge, LLM_RELATION_TYPES,
     Relationship, DedupDecision, QueryRouting, PaperMeta, FamilyDecision, ANSWER_MAX_OUTPUT_TOKENS,
+    LLM_MIN_INTERVAL,
 )
 from src.llm.prompts import build_answer_prompt, ContextBlock
 from src.security.sanitize import neutralize_tags
@@ -35,6 +37,22 @@ from dataclasses import dataclass
 from typing import Iterable, Optional, Tuple, get_args
 
 _LLM_RELATIONS = ", ".join(get_args(LLM_RELATION_TYPES))
+
+# Rate limit (~10 requests/minute): the pause is taken BEFORE a call, only as long as needed since the
+# previous call's start, so nobody waits after the last call (e.g. after a chat's answer) and work done
+# between two calls (retrieval) overlaps the pause. One slot per call across threads (concurrent chats).
+_slot_lock = threading.Lock()
+_next_slot = 0.0
+
+
+def _wait_for_slot():
+    global _next_slot
+    with _slot_lock:
+        now = time.monotonic()
+        start = max(now, _next_slot)
+        _next_slot = start + LLM_MIN_INTERVAL
+    if start > now:
+        time.sleep(start - now)
 
 
 @dataclass
@@ -147,15 +165,12 @@ class LLMService:
             print("WARNING: GEMINI_API_KEY not found in environment variables.")
 
     def _generate(self, prompt: str, alias: str, schema=None, **kwargs):
-        """One call through call_llm + a rate-limit pause. ValueError = the output failed the schema."""
-        try:
-            result, self.last_model = call_llm(
-                [{"role": "user", "content": prompt}], alias=alias, schema=schema, **kwargs
-            )
-            return result
-        finally:
-            # Respect rate limits: ~10 requests/minute = 6 seconds/request
-            time.sleep(6.0)
+        """One call through call_llm, started no sooner than its rate-limit slot. ValueError = the output failed the schema."""
+        _wait_for_slot()
+        result, self.last_model = call_llm(
+            [{"role": "user", "content": prompt}], alias=alias, schema=schema, **kwargs
+        )
+        return result
 
     @retry(
         wait=wait_exponential(multiplier=2, min=10, max=90),
