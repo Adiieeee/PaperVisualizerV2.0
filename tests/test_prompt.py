@@ -60,7 +60,9 @@ def test_external_block_is_tagged_and_cannot_break_out():
 def test_system_prompt_rules_for_external_background():
     p = ANSWER_SYSTEM_PROMPT
     assert "<konteks_eksternal>" in p and "NOT from the papers" in p
-    assert "name the source" in p and "follow the papers" in p
+    # papers first, then the background in its own sentence naming the source (measured: "use it only
+    # where the papers do not" made the model skip it whenever a paper had a one-line description)
+    assert "First give what the papers say" in p and "names the" in p and "follow the papers" in p
     # the security rule covers the new tag too
     assert "<ringkasan_komunitas> and <konteks_eksternal>" in p
 
