@@ -101,10 +101,20 @@ def _base_title(c: dict) -> str:
     return re.sub(r"\s*\([^)]*\)\s*$", "", c["title"])
 
 
+# Words that name a variant of a model, not another concept. Measured (2026-10-29): allowing any short
+# word let "Social Sycophancy" and "Sycophancy Rate" map to the page "Sycophancy (artificial intelligence)".
+_VARIANT_WORDS = {"pro", "flash", "lite", "mini", "nano", "turbo", "chat", "instruct", "base", "large", "small",
+                  "ultra", "plus", "preview", "sonnet", "opus", "haiku", "scout", "maverick"}
+
+
+def _is_variant_word(w: str) -> bool:
+    return any(ch.isdigit() for ch in w) or w in _VARIANT_WORDS
+
+
 def title_tier(name: str, c: dict) -> int:
     """How well a candidate's title names the entity. 2: same name ("Gemini (language model)" for Gemini,
     "TruthfulQA: ..." for TruthfulQA); 1: the title contains every word of the name ("Accuracy and precision"),
-    or the name is the title plus version-like words ("Claude 2" -> "Claude (AI)"); 0: another thing.
+    or the name is the title plus variant words ("Claude 2", "Claude Sonnet 3.7" -> "Claude (AI)"); 0: another thing.
     Measured (2026-10-29): cosine alone ranked "Llama.cpp" above "Llama (language model)" and let
     "Steering wheel" through for "contrastive activation steering"."""
     name_t, base_t = _tokens(name), _tokens(_base_title(c))
@@ -113,8 +123,7 @@ def title_tier(name: str, c: dict) -> int:
     if base_t == name_t:
         return 2
     extra = name_t - base_t
-    if name_t <= _tokens(c["title"]) or (base_t < name_t and all(any(ch.isdigit() for ch in w) or len(w) <= 6
-                                                                  for w in extra)):
+    if name_t <= _tokens(c["title"]) or (base_t < name_t and all(_is_variant_word(w) for w in extra)):
         return 1
     return 0
 

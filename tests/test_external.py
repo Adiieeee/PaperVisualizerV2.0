@@ -71,6 +71,10 @@ def test_title_tier():
     assert ext.title_tier("Accuracy", w("Accuracy and precision")) == 1
     assert ext.title_tier("activation steering", w("Steering wheel")) == 0
     assert ext.title_tier("LLaMA 2", w("Llama.cpp")) == 0
+    assert ext.title_tier("Claude Sonnet 3.7", w("Claude (AI)")) == 1
+    # another concept that only shares a word, even a short one
+    assert ext.title_tier("Social Sycophancy", w("Sycophancy (artificial intelligence)")) == 0
+    assert ext.title_tier("Sycophancy Rate", w("Sycophancy (artificial intelligence)")) == 0
     assert ext.title_tier("TruthfulQA", a("TruthfulQA: Measuring How Models Mimic Human Falsehoods")) == 2
     assert ext.title_tier("DPO", a("What Matters in Data for DPO?")) == 1
 

@@ -5,6 +5,7 @@ import pytest
 from src.llm import llm_service as svc
 from src.llm.prompts import (
     ANSWER_SYSTEM_PROMPT,
+    EXTERNAL_RULES,
     KIND_COMMUNITY,
     KIND_EXTERNAL,
     KIND_GRAPH,
@@ -57,14 +58,24 @@ def test_external_block_is_tagged_and_cannot_break_out():
         < rest.index("</konteks_eksternal>") < rest.index("<pertanyaan_user>")
 
 
-def test_system_prompt_rules_for_external_background():
-    p = ANSWER_SYSTEM_PROMPT
-    assert "<konteks_eksternal>" in p and "NOT from the papers" in p
+def test_external_rules_only_when_an_external_block_is_present():
+    # Measured: the rule in the base prompt changed answers WITHOUT external context (11/18 -> 3/18),
+    # so the base prompt has no trace of it and the extra rules come only with the external block.
+    assert "konteks_eksternal" not in ANSWER_SYSTEM_PROMPT
+    plain = build_answer_prompt("Q?", [(KIND_GRAPH, "G")])
+    assert EXTERNAL_RULES not in plain
+    with_ext = build_answer_prompt("Q?", [(KIND_GRAPH, "G"), (KIND_EXTERNAL, "E")])
+    assert with_ext.startswith(ANSWER_SYSTEM_PROMPT + EXTERNAL_RULES)
     # papers first, then the background in its own sentence naming the source (measured: "use it only
     # where the papers do not" made the model skip it whenever a paper had a one-line description)
-    assert "First give what the papers say" in p and "names the" in p and "follow the papers" in p
-    # the security rule covers the new tag too
-    assert "<ringkasan_komunitas> and <konteks_eksternal>" in p
+    assert "First give what the papers say" in EXTERNAL_RULES and "names the" in EXTERNAL_RULES
+    assert "follow the papers" in EXTERNAL_RULES and "NOT trusted" in EXTERNAL_RULES
+    assert "<" not in EXTERNAL_RULES  # never looks like a delimiter tag
+
+
+def test_external_blocks_from_a_generator_still_get_the_rules():
+    blocks = (b for b in [(KIND_GRAPH, "G"), (KIND_EXTERNAL, "E")])
+    assert EXTERNAL_RULES in build_answer_prompt("Q?", blocks)
 
 
 def test_no_blocks_gets_an_explicit_empty_marker():
