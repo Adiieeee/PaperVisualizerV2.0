@@ -334,7 +334,7 @@ Current results on the 8-paper corpus:
 |---|---|
 | Retrieval (right facts retrieved) | 47/52 = 90% (original cases 38/41, held-out 9/11) |
 | Guardrail (out-of-domain questions refused without an LLM call) | 5/5 |
-| End-to-end (final answer correct, 2 runs per case) | 113/124 = 91% (80% in one run before reranking and guardrails) |
+| End-to-end (final answer correct, 2 runs per case) | 146/162 = 90% (81 cases incl. 8 external-background cases at 16/16; 80% in one run before reranking and guardrails) |
 
 The remaining retrieval failures are documented limitations (see below). Gemini is not fully deterministic, so
 compare end-to-end changes with `--repeat` rather than one run.
